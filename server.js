@@ -551,3 +551,7 @@ app.get('/api/shop/:shopName', async (req, res) => {
 app.listen(PORT, () => {
   console.log(`Etsy shop viewer running at http://localhost:${PORT}`);
 });
+
+// Lets Vercel's serverless function (api/index.js) import this same app
+// instead of running its own server.
+export default app;
