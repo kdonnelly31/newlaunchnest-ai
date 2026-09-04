@@ -662,7 +662,17 @@
     const configRes = await fetch('/api/config');
     if (configRes.ok) {
       const { supabaseUrl, supabaseAnonKey } = await configRes.json();
-      const supabase = createClient(supabaseUrl, supabaseAnonKey);
+      // Reads from either storage since "Remember me" on the login page may have
+      // put the session in sessionStorage instead of the default localStorage.
+      const supabase = createClient(supabaseUrl, supabaseAnonKey, {
+        auth: {
+          storage: {
+            getItem: (key) => localStorage.getItem(key) ?? sessionStorage.getItem(key),
+            setItem: (key, value) => localStorage.setItem(key, value),
+            removeItem: (key) => { localStorage.removeItem(key); sessionStorage.removeItem(key); },
+          },
+        },
+      });
 
       const { data: { session } } = await supabase.auth.getSession();
       if (!session) {
