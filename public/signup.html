@@ -1,0 +1,181 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Sign Up · Etsy Shop Viewer</title>
+<style>
+  :root {
+    --bg: #fdfaf6;
+    --ink: #222;
+    --muted: #6b6b6b;
+    --accent: #d5641c;
+    --card-bg: #ffffff;
+    --border: #eee2d6;
+    --error: #b3261e;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    min-height: 100vh;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    background: var(--bg);
+    color: var(--ink);
+  }
+  .card {
+    width: 100%;
+    max-width: 380px;
+    margin: 2rem;
+    background: var(--card-bg);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 2rem;
+  }
+  h1 {
+    margin: 0 0 .25rem;
+    font-size: 1.5rem;
+  }
+  p.subtitle {
+    margin: 0 0 1.5rem;
+    color: var(--muted);
+  }
+  label {
+    display: block;
+    font-size: .85rem;
+    margin: 0 0 .3rem;
+  }
+  input {
+    width: 100%;
+    padding: .65rem .8rem;
+    margin-bottom: 1rem;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    font-size: 1rem;
+  }
+  .hint {
+    margin: -.6rem 0 1rem;
+    font-size: .78rem;
+    color: var(--muted);
+  }
+  button {
+    width: 100%;
+    padding: .75rem;
+    border: none;
+    border-radius: 8px;
+    background: var(--accent);
+    color: white;
+    font-size: 1rem;
+    cursor: pointer;
+  }
+  button:disabled {
+    opacity: .6;
+    cursor: not-allowed;
+  }
+  #message {
+    min-height: 1.3rem;
+    margin-top: 1rem;
+    font-size: .9rem;
+    text-align: center;
+  }
+  #message.error { color: var(--error); }
+  #message.success { color: #1a7a35; }
+  .switch-link {
+    text-align: center;
+    margin-top: 1.25rem;
+    font-size: .9rem;
+    color: var(--muted);
+  }
+  .switch-link a { color: var(--accent); text-decoration: none; }
+</style>
+</head>
+<body>
+  <div class="card">
+    <h1>Create your account</h1>
+    <p class="subtitle">Sign up for LaunchNestAI</p>
+
+    <form id="signup-form">
+      <label for="full-name">Full name</label>
+      <input id="full-name" type="text" autocomplete="name" />
+
+      <label for="email">Email</label>
+      <input id="email" type="email" autocomplete="email" required />
+
+      <label for="password">Password</label>
+      <input id="password" type="password" autocomplete="new-password" minlength="6" required />
+      <p class="hint">At least 6 characters.</p>
+
+      <button id="submit-btn" type="submit">Sign Up</button>
+    </form>
+
+    <p id="message"></p>
+
+    <p class="switch-link">Already have an account? <a href="/login.html">Log in</a></p>
+  </div>
+
+  <script type="module">
+    import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
+
+    const form = document.getElementById('signup-form');
+    const submitBtn = document.getElementById('submit-btn');
+    const message = document.getElementById('message');
+
+    function showMessage(text, kind) {
+      message.textContent = text;
+      message.className = kind;
+    }
+
+    async function init() {
+      const configRes = await fetch('/api/config');
+      if (!configRes.ok) {
+        showMessage('Sign up is not available right now — the site is missing its Supabase configuration.', 'error');
+        submitBtn.disabled = true;
+        return;
+      }
+      const { supabaseUrl, supabaseAnonKey } = await configRes.json();
+      const supabase = createClient(supabaseUrl, supabaseAnonKey);
+
+      const { data: { session } } = await supabase.auth.getSession();
+      if (session) {
+        window.location.href = '/';
+        return;
+      }
+
+      form.addEventListener('submit', async (e) => {
+        e.preventDefault();
+        submitBtn.disabled = true;
+        showMessage('Creating account…', '');
+
+        const fullName = document.getElementById('full-name').value.trim();
+        const email = document.getElementById('email').value.trim();
+        const password = document.getElementById('password').value;
+
+        const { data, error } = await supabase.auth.signUp({
+          email,
+          password,
+          options: { data: { full_name: fullName || null } },
+        });
+
+        if (error) {
+          showMessage(error.message, 'error');
+          submitBtn.disabled = false;
+          return;
+        }
+
+        if (data.session) {
+          window.location.href = '/';
+          return;
+        }
+
+        showMessage('Account created! Check your email for a confirmation link before logging in.', 'success');
+        form.reset();
+        submitBtn.disabled = false;
+      });
+    }
+
+    init();
+  </script>
+</body>
+</html>

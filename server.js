@@ -13,6 +13,7 @@ const {
   ETSY_API_KEY, ETSY_SHARED_SECRET, ANTHROPIC_API_KEY, PINTEREST_ACCESS_TOKEN,
   FACEBOOK_PAGE_ACCESS_TOKEN, FACEBOOK_PAGE_ID, INSTAGRAM_BUSINESS_ACCOUNT_ID,
   TIKTOK_CLIENT_KEY, TIKTOK_CLIENT_SECRET, TIKTOK_REDIRECT_URI = 'http://localhost:3000/auth/tiktok/callback',
+  SUPABASE_URL, SUPABASE_ANON_KEY,
   PORT = 3000,
 } = process.env;
 
@@ -39,6 +40,10 @@ if (!INSTAGRAM_BUSINESS_ACCOUNT_ID) {
 
 if (!TIKTOK_CLIENT_KEY || !TIKTOK_CLIENT_SECRET) {
   console.warn('Missing TIKTOK_CLIENT_KEY/TIKTOK_CLIENT_SECRET. TikTok posting will be unavailable.');
+}
+
+if (!SUPABASE_URL || !SUPABASE_ANON_KEY) {
+  console.warn('Missing SUPABASE_URL/SUPABASE_ANON_KEY. Login/signup will be unavailable.');
 }
 
 const anthropic = ANTHROPIC_API_KEY ? new Anthropic({ apiKey: ANTHROPIC_API_KEY }) : null;
@@ -296,6 +301,16 @@ const app = express();
 app.use(express.json());
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 app.use(express.static(path.join(__dirname, 'public')));
+
+// The anon key is safe to hand to the browser -- it's designed to be public and is
+// what Supabase's client library uses for login/signup. Access to data is enforced
+// by the row-level security policies on the database side, not by keeping this secret.
+app.get('/api/config', (req, res) => {
+  if (!SUPABASE_URL || !SUPABASE_ANON_KEY) {
+    return res.status(503).json({ error: 'Supabase is not configured on the server.' });
+  }
+  res.json({ supabaseUrl: SUPABASE_URL, supabaseAnonKey: SUPABASE_ANON_KEY });
+});
 
 app.get('/api/pinterest/boards', async (req, res) => {
   if (!PINTEREST_ACCESS_TOKEN) {

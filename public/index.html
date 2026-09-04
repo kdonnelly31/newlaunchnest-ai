@@ -649,10 +649,35 @@
 </style>
 </head>
 <body>
+  <a id="logout-link" href="#" style="display:none; position:fixed; top:1rem; right:1.25rem; font-size:.85rem; color:var(--muted); text-decoration:none;">Log out</a>
+
   <header>
     <h1>Etsy Shop Viewer</h1>
     <p>Enter a public Etsy shop name to see everything they have listed.</p>
   </header>
+
+  <script type="module">
+    import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
+
+    const configRes = await fetch('/api/config');
+    if (configRes.ok) {
+      const { supabaseUrl, supabaseAnonKey } = await configRes.json();
+      const supabase = createClient(supabaseUrl, supabaseAnonKey);
+
+      const { data: { session } } = await supabase.auth.getSession();
+      if (!session) {
+        window.location.href = '/login.html';
+      } else {
+        const logoutLink = document.getElementById('logout-link');
+        logoutLink.style.display = 'block';
+        logoutLink.addEventListener('click', async (e) => {
+          e.preventDefault();
+          await supabase.auth.signOut();
+          window.location.href = '/login.html';
+        });
+      }
+    }
+  </script>
 
   <div class="search-bar">
     <input id="shop-input" type="text" placeholder="e.g. YarnCraftCo" />
