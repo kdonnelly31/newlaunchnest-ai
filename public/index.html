@@ -649,6 +649,7 @@
 </style>
 </head>
 <body>
+  <a id="admin-link" href="/admin.html" style="display:none; position:fixed; top:1rem; right:5rem; font-size:.85rem; color:var(--muted); text-decoration:none;">Admin</a>
   <a id="logout-link" href="#" style="display:none; position:fixed; top:1rem; right:1.25rem; font-size:.85rem; color:var(--muted); text-decoration:none;">Log out</a>
 
   <header>
@@ -685,6 +686,15 @@
           await supabase.auth.signOut();
           window.location.href = '/login.html';
         });
+
+        const { data: profile } = await supabase
+          .from('profiles')
+          .select('role')
+          .eq('id', session.user.id)
+          .single();
+        if (profile?.role === 'admin') {
+          document.getElementById('admin-link').style.display = 'block';
+        }
       }
     }
   </script>

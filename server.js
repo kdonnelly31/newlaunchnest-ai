@@ -8,12 +8,13 @@ import multer from 'multer';
 import Anthropic from '@anthropic-ai/sdk';
 import { z } from 'zod';
 import { zodOutputFormat } from '@anthropic-ai/sdk/helpers/zod';
+import { createClient } from '@supabase/supabase-js';
 
 const {
   ETSY_API_KEY, ETSY_SHARED_SECRET, ANTHROPIC_API_KEY, PINTEREST_ACCESS_TOKEN,
   FACEBOOK_PAGE_ACCESS_TOKEN, FACEBOOK_PAGE_ID, INSTAGRAM_BUSINESS_ACCOUNT_ID,
   TIKTOK_CLIENT_KEY, TIKTOK_CLIENT_SECRET, TIKTOK_REDIRECT_URI = 'http://localhost:3000/auth/tiktok/callback',
-  SUPABASE_URL, SUPABASE_ANON_KEY,
+  SUPABASE_URL, SUPABASE_ANON_KEY, SUPABASE_SERVICE_ROLE_KEY,
   PORT = 3000,
 } = process.env;
 
@@ -44,6 +45,46 @@ if (!TIKTOK_CLIENT_KEY || !TIKTOK_CLIENT_SECRET) {
 
 if (!SUPABASE_URL || !SUPABASE_ANON_KEY) {
   console.warn('Missing SUPABASE_URL/SUPABASE_ANON_KEY. Login/signup will be unavailable.');
+}
+
+if (!SUPABASE_SERVICE_ROLE_KEY) {
+  console.warn('Missing SUPABASE_SERVICE_ROLE_KEY. The admin panel will be unavailable.');
+}
+
+// Service-role client: bypasses row-level security entirely, so it's only ever
+// used server-side (never sent to the browser) and only after verifying the
+// caller is an admin via requireAdmin below.
+const supabaseAdmin = SUPABASE_URL && SUPABASE_SERVICE_ROLE_KEY
+  ? createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, { auth: { persistSession: false } })
+  : null;
+
+async function requireAdmin(req, res, next) {
+  if (!supabaseAdmin) {
+    return res.status(503).json({ error: 'Admin features are not configured on the server.' });
+  }
+
+  const authHeader = req.headers.authorization || '';
+  const token = authHeader.startsWith('Bearer ') ? authHeader.slice(7) : null;
+  if (!token) {
+    return res.status(401).json({ error: 'Missing Authorization header.' });
+  }
+
+  const { data: { user }, error: userError } = await supabaseAdmin.auth.getUser(token);
+  if (userError || !user) {
+    return res.status(401).json({ error: 'Invalid or expired session.' });
+  }
+
+  const { data: profile, error: profileError } = await supabaseAdmin
+    .from('profiles')
+    .select('role')
+    .eq('id', user.id)
+    .single();
+  if (profileError || profile?.role !== 'admin') {
+    return res.status(403).json({ error: 'Admin access required.' });
+  }
+
+  req.adminUser = user;
+  next();
 }
 
 const anthropic = ANTHROPIC_API_KEY ? new Anthropic({ apiKey: ANTHROPIC_API_KEY }) : null;
@@ -310,6 +351,49 @@ app.get('/api/config', (req, res) => {
     return res.status(503).json({ error: 'Supabase is not configured on the server.' });
   }
   res.json({ supabaseUrl: SUPABASE_URL, supabaseAnonKey: SUPABASE_ANON_KEY });
+});
+
+app.get('/api/admin/profiles', requireAdmin, async (req, res) => {
+  const { data, error } = await supabaseAdmin
+    .from('profiles')
+    .select('id, email, full_name, company_name, role, status, created_at')
+    .order('created_at', { ascending: false });
+  if (error) {
+    console.error(error);
+    return res.status(500).json({ error: error.message });
+  }
+  res.json({ profiles: data });
+});
+
+const ROLES = ['admin', 'user'];
+const STATUSES = ['approved', 'declined', 'requested'];
+
+app.patch('/api/admin/profiles/:id', requireAdmin, async (req, res) => {
+  const { role, status } = req.body ?? {};
+  const updates = {};
+  if (role !== undefined) {
+    if (!ROLES.includes(role)) return res.status(400).json({ error: `role must be one of: ${ROLES.join(', ')}` });
+    updates.role = role;
+  }
+  if (status !== undefined) {
+    if (!STATUSES.includes(status)) return res.status(400).json({ error: `status must be one of: ${STATUSES.join(', ')}` });
+    updates.status = status;
+  }
+  if (Object.keys(updates).length === 0) {
+    return res.status(400).json({ error: 'Provide role and/or status to update.' });
+  }
+
+  const { data, error } = await supabaseAdmin
+    .from('profiles')
+    .update(updates)
+    .eq('id', req.params.id)
+    .select('id, email, full_name, company_name, role, status, created_at')
+    .single();
+  if (error) {
+    console.error(error);
+    return res.status(500).json({ error: error.message });
+  }
+  res.json({ profile: data });
 });
 
 app.get('/api/pinterest/boards', async (req, res) => {
