@@ -87,6 +87,35 @@ async function requireAdmin(req, res, next) {
   next();
 }
 
+async function requireApproved(req, res, next) {
+  if (!supabaseAdmin) {
+    return res.status(503).json({ error: 'Auth is not configured on the server.' });
+  }
+
+  const authHeader = req.headers.authorization || '';
+  const token = authHeader.startsWith('Bearer ') ? authHeader.slice(7) : null;
+  if (!token) {
+    return res.status(401).json({ error: 'Missing Authorization header.' });
+  }
+
+  const { data: { user }, error: userError } = await supabaseAdmin.auth.getUser(token);
+  if (userError || !user) {
+    return res.status(401).json({ error: 'Invalid or expired session.' });
+  }
+
+  const { data: profile, error: profileError } = await supabaseAdmin
+    .from('profiles')
+    .select('role, status')
+    .eq('id', user.id)
+    .single();
+  if (profileError || (profile?.role !== 'admin' && profile?.status !== 'approved')) {
+    return res.status(403).json({ error: 'Your account is pending approval.' });
+  }
+
+  req.user = user;
+  next();
+}
+
 const anthropic = ANTHROPIC_API_KEY ? new Anthropic({ apiKey: ANTHROPIC_API_KEY }) : null;
 
 const PINTEREST_BASE = 'https://api.pinterest.com/v5';
@@ -396,7 +425,7 @@ app.patch('/api/admin/profiles/:id', requireAdmin, async (req, res) => {
   res.json({ profile: data });
 });
 
-app.get('/api/pinterest/boards', async (req, res) => {
+app.get('/api/pinterest/boards', requireApproved, async (req, res) => {
   if (!PINTEREST_ACCESS_TOKEN) {
     return res.status(503).json({ error: 'PINTEREST_ACCESS_TOKEN is not configured on the server.' });
   }
@@ -409,7 +438,7 @@ app.get('/api/pinterest/boards', async (req, res) => {
   }
 });
 
-app.post('/api/pinterest/pin', async (req, res) => {
+app.post('/api/pinterest/pin', requireApproved, async (req, res) => {
   if (!PINTEREST_ACCESS_TOKEN) {
     return res.status(503).json({ error: 'PINTEREST_ACCESS_TOKEN is not configured on the server.' });
   }
@@ -437,7 +466,7 @@ app.post('/api/pinterest/pin', async (req, res) => {
   }
 });
 
-app.post('/api/facebook/post', async (req, res) => {
+app.post('/api/facebook/post', requireApproved, async (req, res) => {
   if (!FACEBOOK_PAGE_ACCESS_TOKEN || !FACEBOOK_PAGE_ID) {
     return res.status(503).json({ error: 'Facebook is not configured on the server.' });
   }
@@ -457,7 +486,7 @@ app.post('/api/facebook/post', async (req, res) => {
   }
 });
 
-app.post('/api/instagram/post', async (req, res) => {
+app.post('/api/instagram/post', requireApproved, async (req, res) => {
   if (!FACEBOOK_PAGE_ACCESS_TOKEN || !INSTAGRAM_BUSINESS_ACCOUNT_ID) {
     return res.status(503).json({ error: 'Instagram is not configured on the server.' });
   }
@@ -523,11 +552,11 @@ app.get('/auth/tiktok/callback', async (req, res) => {
   }
 });
 
-app.get('/api/tiktok/status', (req, res) => {
+app.get('/api/tiktok/status', requireApproved, (req, res) => {
   res.json({ connected: !!readTikTokToken() });
 });
 
-app.post('/api/tiktok/post', upload.single('video'), async (req, res) => {
+app.post('/api/tiktok/post', requireApproved, upload.single('video'), async (req, res) => {
   if (!TIKTOK_CLIENT_KEY) {
     return res.status(503).json({ error: 'TikTok is not configured on the server.' });
   }
@@ -580,7 +609,7 @@ app.post('/api/tiktok/post', upload.single('video'), async (req, res) => {
   }
 });
 
-app.post('/api/landing-copy', async (req, res) => {
+app.post('/api/landing-copy', requireApproved, async (req, res) => {
   if (!anthropic) {
     return res.status(503).json({ error: 'ANTHROPIC_API_KEY is not configured on the server.' });
   }
@@ -609,7 +638,7 @@ app.post('/api/landing-copy', async (req, res) => {
   }
 });
 
-app.get('/api/listing/:listingId', async (req, res) => {
+app.get('/api/listing/:listingId', requireApproved, async (req, res) => {
   try {
     const listing = await etsyFetch(
       `/listings/${req.params.listingId}?includes=Images,Videos,Shop,User,Translations`
@@ -621,7 +650,7 @@ app.get('/api/listing/:listingId', async (req, res) => {
   }
 });
 
-app.get('/api/shop/:shopName', async (req, res) => {
+app.get('/api/shop/:shopName', requireApproved, async (req, res) => {
   try {
     const shop = await findShopByName(req.params.shopName);
     if (!shop) {

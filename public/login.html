@@ -77,68 +77,21 @@
   }
   #message.error { color: var(--error); }
   #message.success { color: #1a7a35; }
-  .switch-link {
-    text-align: center;
-    margin-top: 1.25rem;
-    font-size: .9rem;
-    color: var(--muted);
-  }
-  .switch-link a { color: var(--accent); text-decoration: none; }
-  .options-row {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    margin: -.4rem 0 1.25rem;
-    font-size: .85rem;
-  }
-  .remember-me {
-    display: flex;
-    align-items: center;
-    gap: .4rem;
-    color: var(--muted);
-  }
-  .remember-me input { width: auto; margin: 0; }
-  .forgot-link { color: var(--accent); text-decoration: none; }
-  #forgot-panel { display: none; margin: -.5rem 0 1.25rem; }
-  #forgot-panel p.hint {
-    margin: 0 0 .5rem;
-    font-size: .82rem;
-    color: var(--muted);
-  }
 </style>
 </head>
 <body>
   <div class="card">
     <h1>Welcome</h1>
-    <p class="subtitle">Log in to LaunchNestAI</p>
+    <p class="subtitle">Log in to LaunchNestAI — no password needed. We'll email you a link to sign in.</p>
 
     <form id="login-form">
       <label for="email">Email</label>
       <input id="email" type="email" autocomplete="email" required />
 
-      <label for="password">Password</label>
-      <input id="password" type="password" autocomplete="current-password" required />
-
-      <div class="options-row">
-        <label class="remember-me">
-          <input id="remember-me" type="checkbox" checked />
-          Remember me
-        </label>
-        <a class="forgot-link" href="#" id="forgot-link">Forgot password?</a>
-      </div>
-
-      <button id="submit-btn" type="submit">Log In</button>
+      <button id="submit-btn" type="submit">Send Login Link</button>
     </form>
 
-    <div id="forgot-panel">
-      <p class="hint">Enter your email and we'll send you a link to reset your password.</p>
-      <input id="forgot-email" type="email" placeholder="you@example.com" />
-      <button id="forgot-submit-btn" type="button">Send Reset Link</button>
-    </div>
-
     <p id="message"></p>
-
-    <p class="switch-link">Don't have an account? <a href="/signup.html">Sign up</a></p>
   </div>
 
   <script type="module">
@@ -146,37 +99,12 @@
 
     const form = document.getElementById('login-form');
     const submitBtn = document.getElementById('submit-btn');
-    const rememberMeBox = document.getElementById('remember-me');
-    const forgotLink = document.getElementById('forgot-link');
-    const forgotPanel = document.getElementById('forgot-panel');
-    const forgotEmailInput = document.getElementById('forgot-email');
-    const forgotSubmitBtn = document.getElementById('forgot-submit-btn');
     const message = document.getElementById('message');
 
     function showMessage(text, kind) {
       message.textContent = text;
       message.className = kind;
     }
-
-    // "Remember me" controls whether the session survives closing the browser
-    // (localStorage) or is dropped when the tab closes (sessionStorage).
-    let rememberMe = true;
-    const rememberAwareStorage = {
-      getItem: (key) => localStorage.getItem(key) ?? sessionStorage.getItem(key),
-      setItem: (key, value) => {
-        if (rememberMe) {
-          localStorage.setItem(key, value);
-          sessionStorage.removeItem(key);
-        } else {
-          sessionStorage.setItem(key, value);
-          localStorage.removeItem(key);
-        }
-      },
-      removeItem: (key) => {
-        localStorage.removeItem(key);
-        sessionStorage.removeItem(key);
-      },
-    };
 
     async function init() {
       const configRes = await fetch('/api/config');
@@ -186,9 +114,7 @@
         return;
       }
       const { supabaseUrl, supabaseAnonKey } = await configRes.json();
-      const supabase = createClient(supabaseUrl, supabaseAnonKey, {
-        auth: { storage: rememberAwareStorage },
-      });
+      const supabase = createClient(supabaseUrl, supabaseAnonKey);
 
       const { data: { session } } = await supabase.auth.getSession();
       if (session) {
@@ -199,48 +125,25 @@
       form.addEventListener('submit', async (e) => {
         e.preventDefault();
         submitBtn.disabled = true;
-        showMessage('Logging in…', '');
+        showMessage('Sending your login link…', '');
 
-        rememberMe = rememberMeBox.checked;
         const email = document.getElementById('email').value.trim();
-        const password = document.getElementById('password').value;
 
-        const { error } = await supabase.auth.signInWithPassword({ email, password });
+        // signInWithOtp both signs in an existing user and creates a new one
+        // on first use, so there's no separate signup step.
+        const { error } = await supabase.auth.signInWithOtp({
+          email,
+          options: { emailRedirectTo: window.location.origin + '/' },
+        });
+
         if (error) {
           showMessage(error.message, 'error');
           submitBtn.disabled = false;
           return;
         }
 
-        window.location.href = '/';
-      });
-
-      forgotLink.addEventListener('click', (e) => {
-        e.preventDefault();
-        forgotPanel.style.display = forgotPanel.style.display === 'block' ? 'none' : 'block';
-        showMessage('', '');
-      });
-
-      forgotSubmitBtn.addEventListener('click', async () => {
-        const email = forgotEmailInput.value.trim();
-        if (!email) {
-          showMessage('Enter your email above first.', 'error');
-          return;
-        }
-
-        forgotSubmitBtn.disabled = true;
-        showMessage('Sending reset link…', '');
-
-        const { error } = await supabase.auth.resetPasswordForEmail(email, {
-          redirectTo: `${window.location.origin}/reset-password.html`,
-        });
-
-        forgotSubmitBtn.disabled = false;
-        if (error) {
-          showMessage(error.message, 'error');
-          return;
-        }
-        showMessage('Check your email for a password reset link.', 'success');
+        showMessage('Check your email for a link to log in.', 'success');
+        form.reset();
       });
     }
 
