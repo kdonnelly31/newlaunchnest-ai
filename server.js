@@ -385,7 +385,7 @@ app.get('/api/config', (req, res) => {
 app.get('/api/admin/profiles', requireAdmin, async (req, res) => {
   const { data, error } = await supabaseAdmin
     .from('profiles')
-    .select('id, email, full_name, company_name, role, status, created_at')
+    .select('id, email, full_name, company_name, role, status, page_allowance, created_at')
     .order('created_at', { ascending: false });
   if (error) {
     console.error(error);
@@ -416,13 +416,51 @@ app.patch('/api/admin/profiles/:id', requireAdmin, async (req, res) => {
     .from('profiles')
     .update(updates)
     .eq('id', req.params.id)
-    .select('id, email, full_name, company_name, role, status, created_at')
+    .select('id, email, full_name, company_name, role, status, page_allowance, created_at')
     .single();
   if (error) {
     console.error(error);
     return res.status(500).json({ error: error.message });
   }
   res.json({ profile: data });
+});
+
+// Called when a buyer repurchases the Starter tier -- adds to (never resets)
+// their page_allowance via the grant_additional_pages() Postgres function,
+// which only the service-role key can execute.
+app.post('/api/admin/profiles/:id/grant-pages', requireAdmin, async (req, res) => {
+  const amount = Number.isInteger(req.body?.amount) ? req.body.amount : 3;
+  if (amount <= 0) {
+    return res.status(400).json({ error: 'amount must be a positive integer.' });
+  }
+
+  const { data: target, error: lookupError } = await supabaseAdmin
+    .from('profiles')
+    .select('email')
+    .eq('id', req.params.id)
+    .single();
+  if (lookupError || !target) {
+    return res.status(404).json({ error: 'No profile found for that id.' });
+  }
+
+  const { data: newAllowance, error: grantError } = await supabaseAdmin
+    .rpc('grant_additional_pages', { p_email: target.email, p_amount: amount });
+  if (grantError) {
+    console.error(grantError);
+    return res.status(500).json({ error: grantError.message });
+  }
+
+  const { data: profile, error: profileError } = await supabaseAdmin
+    .from('profiles')
+    .select('id, email, full_name, company_name, role, status, page_allowance, created_at')
+    .eq('id', req.params.id)
+    .single();
+  if (profileError) {
+    console.error(profileError);
+    return res.status(500).json({ error: profileError.message });
+  }
+
+  res.json({ profile, page_allowance: newAllowance });
 });
 
 app.get('/api/pinterest/boards', requireApproved, async (req, res) => {

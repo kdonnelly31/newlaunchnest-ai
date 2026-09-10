@@ -34,6 +34,7 @@
     padding: 0 1rem 1rem;
   }
   #status.error { color: var(--error); }
+  #status.success { color: var(--success); }
   .table-wrap {
     max-width: 1100px;
     margin: 0 auto;
@@ -103,6 +104,7 @@
           <th>Company</th>
           <th>Role</th>
           <th>Status</th>
+          <th>Pages</th>
           <th>Actions</th>
         </tr>
       </thead>
@@ -140,9 +142,12 @@
         <td>${profile.company_name ?? ''}</td>
         <td>${roleSelect}</td>
         <td><span class="badge ${STATUS_BADGE[profile.status] ?? ''}">${profile.status}</span></td>
+        <td>${profile.page_allowance}</td>
         <td class="actions">
           <button class="btn-approve" ${profile.status === 'approved' ? 'disabled' : ''}>Approve</button>
           <button class="btn-decline" ${profile.status === 'declined' ? 'disabled' : ''}>Decline</button>
+          <input class="grant-amount" type="number" min="1" value="3" style="width:3.5rem; padding:.35rem; border:1px solid var(--border); border-radius:6px; font-size:.85rem;" />
+          <button class="btn-grant">Grant Pages</button>
         </td>
       `;
 
@@ -160,9 +165,26 @@
         tr.replaceWith(renderRow(data.profile, accessToken));
       }
 
+      async function grantPages() {
+        const amount = Number(tr.querySelector('.grant-amount').value) || 3;
+        const res = await fetch(`/api/admin/profiles/${profile.id}/grant-pages`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${accessToken}` },
+          body: JSON.stringify({ amount }),
+        });
+        const data = await res.json();
+        if (!res.ok) {
+          setStatus(data.error || 'Something went wrong.', 'error');
+          return;
+        }
+        setStatus(`Granted ${amount} page(s) to ${profile.email} (new total: ${data.page_allowance}).`, 'success');
+        tr.replaceWith(renderRow(data.profile, accessToken));
+      }
+
       tr.querySelector('.btn-approve').addEventListener('click', () => patch({ status: 'approved' }));
       tr.querySelector('.btn-decline').addEventListener('click', () => patch({ status: 'declined' }));
       tr.querySelector('.role-select').addEventListener('change', (e) => patch({ role: e.target.value }));
+      tr.querySelector('.btn-grant').addEventListener('click', grantPages);
 
       return tr;
     }

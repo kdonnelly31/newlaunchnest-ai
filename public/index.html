@@ -649,6 +649,7 @@
 </style>
 </head>
 <body>
+  <span id="pages-remaining" style="display:none; position:fixed; top:1rem; right:11.5rem; font-size:.85rem; color:var(--muted);"></span>
   <a id="admin-link" href="/admin.html" style="display:none; position:fixed; top:1rem; right:5rem; font-size:.85rem; color:var(--muted); text-decoration:none;">Admin</a>
   <a id="logout-link" href="#" style="display:none; position:fixed; top:1rem; right:1.25rem; font-size:.85rem; color:var(--muted); text-decoration:none;">Log out</a>
 
@@ -716,6 +717,22 @@
             await supabase.auth.signOut();
             window.location.href = '/login.html';
           });
+        } else {
+          // Exposed so the plain <script> below can check/consume the page
+          // allowance (create_landing_page_allowed RPC, landing_pages insert).
+          window.supabaseClient = supabase;
+          window.currentUserId = session.user.id;
+
+          window.refreshPagesRemaining = async () => {
+            const { data, error } = await supabase.rpc('create_landing_page_allowed', {
+              p_user_id: session.user.id,
+            });
+            const pagesRemainingEl = document.getElementById('pages-remaining');
+            if (error || !data?.[0]) return;
+            pagesRemainingEl.textContent = `${data[0].remaining} page(s) left`;
+            pagesRemainingEl.style.display = 'block';
+          };
+          window.refreshPagesRemaining();
         }
       }
     }
@@ -971,6 +988,19 @@
       const btn = document.getElementById('create-landing-btn');
       const originalLabel = btn.textContent;
 
+      const { data: allowance, error: allowanceError } = await window.supabaseClient.rpc(
+        'create_landing_page_allowed',
+        { p_user_id: window.currentUserId },
+      );
+      if (allowanceError) {
+        status.textContent = 'Could not check your page allowance: ' + allowanceError.message;
+        return;
+      }
+      if (!allowance?.[0]?.allowed) {
+        status.textContent = "You've reached your page limit — purchase again to unlock 3 more pages.";
+        return;
+      }
+
       // Open the tab synchronously, in direct response to the click — opening
       // it after the awaited fetch below would get blocked as a popup.
       const newTab = window.open('', '_blank');
@@ -1013,6 +1043,15 @@
         newTab.document.open();
         newTab.document.write(buildLandingPageDocument(l, copy, price));
         newTab.document.close();
+
+        // RLS re-checks the allowance on this insert independently of the
+        // RPC check above, so a page can't be recorded past the limit even
+        // if something raced between the two.
+        const { error: insertError } = await window.supabaseClient
+          .from('landing_pages')
+          .insert({ user_id: window.currentUserId });
+        if (insertError) console.error('Failed to record landing page:', insertError.message);
+        window.refreshPagesRemaining();
       } catch (err) {
         newTab.document.body.textContent = 'Failed to reach the server: ' + err.message;
       } finally {
