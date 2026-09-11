@@ -729,7 +729,8 @@
             });
             const pagesRemainingEl = document.getElementById('pages-remaining');
             if (error || !data?.[0]) return;
-            pagesRemainingEl.textContent = `${data[0].remaining} page(s) left`;
+            const { remaining } = data[0];
+            pagesRemainingEl.textContent = remaining === null ? 'Unlimited pages' : `${remaining} page(s) left`;
             pagesRemainingEl.style.display = 'block';
           };
           window.refreshPagesRemaining();
