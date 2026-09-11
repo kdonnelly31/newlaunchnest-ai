@@ -62,6 +62,20 @@
     opacity: .6;
     cursor: not-allowed;
   }
+  .search-bar input[readonly] {
+    background: var(--border);
+    color: var(--muted);
+    cursor: default;
+  }
+  .change-shop-link {
+    display: none;
+    align-self: center;
+    font-size: .85rem;
+    color: var(--muted);
+    text-decoration: underline;
+    cursor: pointer;
+    white-space: nowrap;
+  }
   #status {
     text-align: center;
     color: var(--muted);
@@ -742,6 +756,7 @@
   <div class="search-bar">
     <input id="shop-input" type="text" placeholder="e.g. YarnCraftCo" />
     <button id="search-btn">Search</button>
+    <span class="change-shop-link" id="change-shop-link">Change shop</span>
   </div>
 
   <p id="status"></p>
@@ -775,6 +790,7 @@
   <script>
     const input = document.getElementById('shop-input');
     const btn = document.getElementById('search-btn');
+    const changeShopLink = document.getElementById('change-shop-link');
     const status = document.getElementById('status');
     const shopInfo = document.getElementById('shop-info');
     const grid = document.getElementById('grid');
@@ -807,6 +823,13 @@
         }
 
         status.textContent = `${data.listings.length} active listing(s) found.`;
+
+        // Lock the field to the shop's official name (Etsy's casing may differ
+        // from what was typed) so it can't be edited mid-session by accident.
+        input.value = data.shop.name;
+        input.readOnly = true;
+        changeShopLink.style.display = 'inline';
+
         shopInfo.innerHTML = `
           ${data.shop.icon ? `<img src="${data.shop.icon}" alt="${data.shop.name}" />` : ''}
           <h2>${data.shop.title || data.shop.name}</h2>
@@ -1448,8 +1471,22 @@ for (const post of socialPosts) { platformInit[post.platform]?.(listing, post); 
       return div.innerHTML;
     }
 
+    function resetShopSearch() {
+      input.value = '';
+      input.readOnly = false;
+      changeShopLink.style.display = 'none';
+      status.textContent = '';
+      shopInfo.innerHTML = '';
+      grid.innerHTML = '';
+      detail.style.display = 'none';
+      detail.innerHTML = '';
+      listingPicker.style.display = 'none';
+      input.focus();
+    }
+
     btn.addEventListener('click', search);
     input.addEventListener('keydown', e => { if (e.key === 'Enter') search(); });
+    changeShopLink.addEventListener('click', resetShopSearch);
     listingSelect.addEventListener('change', e => showListingDetail(e.target.value));
   </script>
 </body>
