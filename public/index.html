@@ -711,7 +711,7 @@
 
         const { data: profile } = await supabase
           .from('profiles')
-          .select('role, status')
+          .select('role, status, etsy_shop_name')
           .eq('id', session.user.id)
           .single();
         if (profile?.role === 'admin') {
@@ -736,6 +736,12 @@
           // allowance (create_landing_page_allowed RPC, landing_pages insert).
           window.supabaseClient = supabase;
           window.currentUserId = session.user.id;
+
+          // Pre-fill (not auto-search) so the customer sees their own shop
+          // ready to go without a surprise API call firing on every login.
+          if (profile?.etsy_shop_name) {
+            document.getElementById('shop-input').value = profile.etsy_shop_name;
+          }
 
           window.refreshPagesRemaining = async () => {
             const { data, error } = await supabase.rpc('create_landing_page_allowed', {
