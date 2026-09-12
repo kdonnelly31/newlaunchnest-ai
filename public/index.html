@@ -711,7 +711,7 @@
 
         const { data: profile } = await supabase
           .from('profiles')
-          .select('role, status')
+          .select('role, status, etsy_shop_name')
           .eq('id', session.user.id)
           .single();
         if (profile?.role === 'admin') {
@@ -736,6 +736,22 @@
           // allowance (create_landing_page_allowed RPC, landing_pages insert).
           window.supabaseClient = supabase;
           window.currentUserId = session.user.id;
+
+          // Non-admins are restricted to the one shop an admin assigned them
+          // (real enforcement is server-side; this just reflects it in the UI
+          // so there's nothing confusing to click). Admins keep free search.
+          if (profile?.role !== 'admin') {
+            window.shopSearchRestricted = true;
+            const shopInputEl = document.getElementById('shop-input');
+            if (!profile?.etsy_shop_name) {
+              document.querySelector('.search-bar').style.display = 'none';
+              document.getElementById('status').textContent =
+                "Your account isn't linked to a shop yet — contact support.";
+            } else {
+              shopInputEl.value = profile.etsy_shop_name;
+              shopInputEl.readOnly = true;
+            }
+          }
 
           window.refreshPagesRemaining = async () => {
             const { data, error } = await supabase.rpc('create_landing_page_allowed', {
@@ -828,7 +844,7 @@
         // from what was typed) so it can't be edited mid-session by accident.
         input.value = data.shop.name;
         input.readOnly = true;
-        changeShopLink.style.display = 'inline';
+        if (!window.shopSearchRestricted) changeShopLink.style.display = 'inline';
 
         shopInfo.innerHTML = `
           ${data.shop.icon ? `<img src="${data.shop.icon}" alt="${data.shop.name}" />` : ''}

@@ -105,7 +105,7 @@ async function requireApproved(req, res, next) {
 
   const { data: profile, error: profileError } = await supabaseAdmin
     .from('profiles')
-    .select('role, status')
+    .select('role, status, etsy_shop_name')
     .eq('id', user.id)
     .single();
   if (profileError || (profile?.role !== 'admin' && profile?.status !== 'approved')) {
@@ -113,6 +113,7 @@ async function requireApproved(req, res, next) {
   }
 
   req.user = user;
+  req.profile = profile;
   next();
 }
 
@@ -385,7 +386,7 @@ app.get('/api/config', (req, res) => {
 app.get('/api/admin/profiles', requireAdmin, async (req, res) => {
   const { data, error } = await supabaseAdmin
     .from('profiles')
-    .select('id, email, full_name, company_name, role, status, page_allowance, created_at')
+    .select('id, email, full_name, company_name, role, status, page_allowance, etsy_shop_name, created_at')
     .order('created_at', { ascending: false });
   if (error) {
     console.error(error);
@@ -398,7 +399,7 @@ const ROLES = ['admin', 'user'];
 const STATUSES = ['approved', 'declined', 'requested'];
 
 app.patch('/api/admin/profiles/:id', requireAdmin, async (req, res) => {
-  const { role, status } = req.body ?? {};
+  const { role, status, etsy_shop_name } = req.body ?? {};
   const updates = {};
   if (role !== undefined) {
     if (!ROLES.includes(role)) return res.status(400).json({ error: `role must be one of: ${ROLES.join(', ')}` });
@@ -408,15 +409,18 @@ app.patch('/api/admin/profiles/:id', requireAdmin, async (req, res) => {
     if (!STATUSES.includes(status)) return res.status(400).json({ error: `status must be one of: ${STATUSES.join(', ')}` });
     updates.status = status;
   }
+  if (etsy_shop_name !== undefined) {
+    updates.etsy_shop_name = typeof etsy_shop_name === 'string' ? etsy_shop_name.trim() || null : null;
+  }
   if (Object.keys(updates).length === 0) {
-    return res.status(400).json({ error: 'Provide role and/or status to update.' });
+    return res.status(400).json({ error: 'Provide role, status, and/or etsy_shop_name to update.' });
   }
 
   const { data, error } = await supabaseAdmin
     .from('profiles')
     .update(updates)
     .eq('id', req.params.id)
-    .select('id, email, full_name, company_name, role, status, page_allowance, created_at')
+    .select('id, email, full_name, company_name, role, status, page_allowance, etsy_shop_name, created_at')
     .single();
   if (error) {
     console.error(error);
@@ -452,7 +456,7 @@ app.post('/api/admin/profiles/:id/grant-pages', requireAdmin, async (req, res) =
 
   const { data: profile, error: profileError } = await supabaseAdmin
     .from('profiles')
-    .select('id, email, full_name, company_name, role, status, page_allowance, created_at')
+    .select('id, email, full_name, company_name, role, status, page_allowance, etsy_shop_name, created_at')
     .eq('id', req.params.id)
     .single();
   if (profileError) {
@@ -676,11 +680,28 @@ app.post('/api/landing-copy', requireApproved, async (req, res) => {
   }
 });
 
+// Non-admin customers are restricted to the one shop an admin assigned them
+// (etsy_shop_name) -- Etsy's API has no way to verify shop ownership, so this
+// is the actual enforcement boundary; the UI just reflects it, doesn't create it.
+function assertShopAllowed(req, res, shopName) {
+  if (req.profile.role === 'admin') return true;
+  if (!req.profile.etsy_shop_name) {
+    res.status(403).json({ error: "Your account isn't linked to a shop yet — contact support." });
+    return false;
+  }
+  if (req.profile.etsy_shop_name.toLowerCase() !== shopName.toLowerCase()) {
+    res.status(403).json({ error: 'You can only view your own shop.' });
+    return false;
+  }
+  return true;
+}
+
 app.get('/api/listing/:listingId', requireApproved, async (req, res) => {
   try {
     const listing = await etsyFetch(
       `/listings/${req.params.listingId}?includes=Images,Videos,Shop,User,Translations`
     );
+    if (!assertShopAllowed(req, res, listing.shop?.shop_name || '')) return;
     res.json(listing);
   } catch (err) {
     console.error(err);
@@ -689,6 +710,7 @@ app.get('/api/listing/:listingId', requireApproved, async (req, res) => {
 });
 
 app.get('/api/shop/:shopName', requireApproved, async (req, res) => {
+  if (!assertShopAllowed(req, res, req.params.shopName)) return;
   try {
     const shop = await findShopByName(req.params.shopName);
     if (!shop) {

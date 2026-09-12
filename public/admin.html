@@ -105,6 +105,7 @@
           <th>Role</th>
           <th>Status</th>
           <th>Pages</th>
+          <th>Etsy Shop</th>
           <th>Actions</th>
         </tr>
       </thead>
@@ -143,6 +144,10 @@
         <td>${roleSelect}</td>
         <td><span class="badge ${STATUS_BADGE[profile.status] ?? ''}">${profile.status}</span></td>
         <td>${profile.page_allowance}</td>
+        <td>
+          <input class="etsy-shop-input" type="text" placeholder="e.g. YarnCraftCo" value="${profile.etsy_shop_name ?? ''}" style="width:9rem; padding:.35rem; border:1px solid var(--border); border-radius:6px; font-size:.85rem;" />
+          <button class="btn-save-shop">Save</button>
+        </td>
         <td class="actions">
           <button class="btn-approve" ${profile.status === 'approved' ? 'disabled' : ''}>Approve</button>
           <button class="btn-decline" ${profile.status === 'declined' ? 'disabled' : ''}>Decline</button>
@@ -185,6 +190,9 @@
       tr.querySelector('.btn-decline').addEventListener('click', () => patch({ status: 'declined' }));
       tr.querySelector('.role-select').addEventListener('change', (e) => patch({ role: e.target.value }));
       tr.querySelector('.btn-grant').addEventListener('click', grantPages);
+      tr.querySelector('.btn-save-shop').addEventListener('click', () =>
+        patch({ etsy_shop_name: tr.querySelector('.etsy-shop-input').value })
+      );
 
       return tr;
     }
