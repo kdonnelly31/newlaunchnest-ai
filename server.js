@@ -385,7 +385,7 @@ app.get('/api/config', (req, res) => {
 app.get('/api/admin/profiles', requireAdmin, async (req, res) => {
   const { data, error } = await supabaseAdmin
     .from('profiles')
-    .select('id, email, full_name, company_name, role, status, page_allowance, etsy_shop_name, created_at')
+    .select('id, email, full_name, company_name, role, status, page_allowance, created_at')
     .order('created_at', { ascending: false });
   if (error) {
     console.error(error);
@@ -398,7 +398,7 @@ const ROLES = ['admin', 'user'];
 const STATUSES = ['approved', 'declined', 'requested'];
 
 app.patch('/api/admin/profiles/:id', requireAdmin, async (req, res) => {
-  const { role, status, etsy_shop_name } = req.body ?? {};
+  const { role, status } = req.body ?? {};
   const updates = {};
   if (role !== undefined) {
     if (!ROLES.includes(role)) return res.status(400).json({ error: `role must be one of: ${ROLES.join(', ')}` });
@@ -408,18 +408,15 @@ app.patch('/api/admin/profiles/:id', requireAdmin, async (req, res) => {
     if (!STATUSES.includes(status)) return res.status(400).json({ error: `status must be one of: ${STATUSES.join(', ')}` });
     updates.status = status;
   }
-  if (etsy_shop_name !== undefined) {
-    updates.etsy_shop_name = typeof etsy_shop_name === 'string' ? etsy_shop_name.trim() || null : null;
-  }
   if (Object.keys(updates).length === 0) {
-    return res.status(400).json({ error: 'Provide role, status, and/or etsy_shop_name to update.' });
+    return res.status(400).json({ error: 'Provide role and/or status to update.' });
   }
 
   const { data, error } = await supabaseAdmin
     .from('profiles')
     .update(updates)
     .eq('id', req.params.id)
-    .select('id, email, full_name, company_name, role, status, page_allowance, etsy_shop_name, created_at')
+    .select('id, email, full_name, company_name, role, status, page_allowance, created_at')
     .single();
   if (error) {
     console.error(error);
