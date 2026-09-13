@@ -777,7 +777,12 @@ app.post('/api/verify-purchase', requireAuth, async (req, res) => {
         purchase_verified_at: new Date().toISOString(),
       })
       .eq('id', req.user.id);
-    if (approveError) throw new Error(approveError.message);
+    if (approveError) {
+      if (approveError.code === '23505') {
+        return res.status(409).json({ error: 'This order number has already been used to activate another account.' });
+      }
+      throw new Error(approveError.message);
+    }
 
     res.json({ approved: true });
   } catch (err) {
