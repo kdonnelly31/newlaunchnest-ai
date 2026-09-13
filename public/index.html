@@ -761,7 +761,17 @@
               });
               const verifyData = await verifyRes.json();
               if (!verifyRes.ok) {
-                messageEl.textContent = verifyData.error || 'Something went wrong. Please try again.';
+                if (verifyRes.status === 404) {
+                  messageEl.innerHTML = `
+                    <div style="text-align:left; color:#6b6b6b;">
+                      <p style="font-weight:600; color:#222; margin:0 0 .4rem;">Hmm, We Couldn't Find Your Order</p>
+                      <p style="margin:0 0 .75rem;">This order number doesn't match a LaunchNestAI purchase. Please double-check the order number from your Etsy purchase confirmation.</p>
+                      <p style="margin:0 0 .75rem;">Haven't purchased yet? <a href="https://www.etsy.com/listing/4569723339/ai-landing-page-marketing-template-pdf" target="_blank" rel="noopener noreferrer" style="color:#d5641c;">Grab your copy on Etsy</a> to get started.</p>
+                      <p style="margin:0;">Still stuck? Reach out through <a href="https://www.etsy.com/shop/LaunchNestAI" target="_blank" rel="noopener noreferrer" style="color:#d5641c;">Etsy Messages</a> — we're happy to help.</p>
+                    </div>`;
+                } else {
+                  messageEl.textContent = verifyData.error || 'Something went wrong. Please try again.';
+                }
                 submitBtn.disabled = false;
                 return;
               }
