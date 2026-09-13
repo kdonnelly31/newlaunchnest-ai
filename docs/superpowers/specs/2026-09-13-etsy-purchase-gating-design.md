@@ -41,9 +41,16 @@ Two new capabilities are added to the existing Express + Supabase app:
    `transactions_r`.
 2. **Purchase verification endpoint** (buyer-facing, self-serve): given an
    Etsy receipt (order) number typed in by the buyer, confirms it's a paid
-   order containing the LaunchNestAI listing, placed under the buyer's login
-   email, and not already claimed by another account — then flips their
-   profile to `approved`.
+   order containing the LaunchNestAI listing and not already claimed by
+   another account — then flips their profile to `approved`.
+
+> **Note on the buyer-email check:** the original design also planned to
+> confirm the Etsy order's email matches the buyer's login email. Etsy
+> gates that specific field (`buyer_email`) behind a separate, manually
+> reviewed approval beyond the standard `transactions_r` scope, with no
+> published timeline. Rather than block launch on that approval, this
+> version ships **without** the email match — see "Future Enhancement"
+> below for the drop-in addition once that access is granted.
 
 This mirrors the existing TikTok OAuth integration pattern already in
 `server.js` (`/auth/tiktok`, `/auth/tiktok/callback`), adapted for Etsy's
@@ -161,11 +168,7 @@ error message and an appropriate HTTP status):
 6. **Paid?** — `receipt.is_paid !== true` → `422 "That order hasn't completed payment yet."`
 7. **Right listing?** — none of `receipt.transactions[].listing_id` equals
    `ETSY_PRODUCT_LISTING_ID` → `422 "That order doesn't include the LaunchNestAI product."`
-8. **Right buyer?** — `receipt.buyer_email` (case-insensitive) does not
-   match the logged-in user's email → `422 "That order was placed under a
-   different email address. Log in with the email you used at checkout,
-   or contact support."`
-9. **Approve** — via `supabaseAdmin` (service role, since a user can't
+8. **Approve** — via `supabaseAdmin` (service role, since a user can't
    grant themselves `approved` under RLS), update the profile:
    `status = 'approved'`, `etsy_receipt_id = receiptId`,
    `purchase_verified_at = now()`. Return `200 { approved: true }`.
@@ -193,9 +196,13 @@ error message and an appropriate HTTP status):
   the one endpoint whose entire job is to move a user out of `requested`.
   It still requires a valid, non-expired Supabase session token, so an
   anonymous caller can't call it at all.
-- The email-match check (step 8) is the main anti-sharing control: knowing
-  someone else's order number (e.g. from a leaked screenshot) isn't enough
-  without also controlling the email address the order was placed under.
+- Without the email-match check (deferred, see below), knowing a valid
+  order number is sufficient to claim it — mitigated by the one-account-
+  per-receipt uniqueness constraint (step 3), so at most one account can
+  ever be activated per real purchase, same as if the legitimate buyer
+  had claimed it themselves. The residual risk is a *leaked* order number
+  being claimed by someone other than the buyer, before the buyer claims
+  it themselves.
 - Rate limiting / brute-forcing receipt IDs: out of scope for this pass,
   same risk profile as the app's other unauthenticated-adjacent endpoints
   today. Worth a follow-up if abuse is observed (e.g. cap attempts per
@@ -212,7 +219,6 @@ error message and an appropriate HTTP status):
 | Receipt not found | 404 | "We couldn't find that order number — double-check it and try again." |
 | Receipt not paid | 422 | "That order hasn't completed payment yet." |
 | Wrong listing | 422 | "That order doesn't include the LaunchNestAI product." |
-| Wrong email | 422 | "That order was placed under a different email address. Log in with the email you used at checkout, or contact support." |
 | Etsy API error | 502 | "Something went wrong checking your order — try again in a moment." |
 
 In every failure case, the buyer stays on the pending screen and can retry,
@@ -225,11 +231,24 @@ or you can still manually approve them from `/admin.html`.
   the Etsy API responses for each branch in the error table above).
 - Manual/integration, against a real Etsy sandbox order or a real low-value
   test purchase: full connect flow, a valid verification, an already-used
-  receipt, a wrong-email receipt, a wrong-listing receipt, and a
-  simulated expired-access-token call to confirm refresh works.
+  receipt, a wrong-listing receipt, and a simulated expired-access-token
+  call to confirm refresh works.
 - Confirm existing flows are untouched: manual Approve/Decline in
   `/admin.html` still works for an unverified account; already-approved
   accounts are unaffected by any of this.
+
+## Future Enhancement: Email Match Check
+
+Once Etsy approves `buyer_email` access for this app (requested separately
+from the Etsy Developer dashboard, on top of the standard `transactions_r`
+scope), add one more validation step between "Right listing?" and
+"Approve": if `receipt.buyer_email` (case-insensitive) doesn't match the
+logged-in user's email, reject with
+`422 "That order was placed under a different email address. Log in with
+the email you used at checkout, or contact support."` This is a pure,
+easily unit-testable addition to the same decision function used in step
+7 — no schema or endpoint changes needed, since `profiles.email` is
+already available on the authenticated request.
 
 ## Out of Scope (separate, unrelated change)
 
