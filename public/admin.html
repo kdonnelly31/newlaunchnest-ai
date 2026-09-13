@@ -198,14 +198,31 @@
       return tr;
     }
 
+    async function connectEtsy(accessToken) {
+      const etsyStatusEl = document.getElementById('etsy-status');
+      const res = await fetch('/api/etsy/connect-ticket', { headers: { Authorization: `Bearer ${accessToken}` } });
+      if (!res.ok) {
+        etsyStatusEl.textContent = 'Could not start the Etsy connection — try refreshing the page.';
+        return;
+      }
+      const { ticket } = await res.json();
+      window.location.href = `/auth/etsy/connect?ticket=${encodeURIComponent(ticket)}`;
+    }
+
     async function loadEtsyStatus(accessToken) {
       const etsyStatusEl = document.getElementById('etsy-status');
       const res = await fetch('/api/etsy/status', { headers: { Authorization: `Bearer ${accessToken}` } });
       if (!res.ok) return;
       const data = await res.json();
-      etsyStatusEl.innerHTML = data.connected
+      const connectLabel = data.connected ? 'Reconnect Etsy' : 'Connect Etsy';
+      const statusText = data.connected
         ? `Etsy connected (shop ID ${data.shopId}).`
-        : '<a href="/auth/etsy/connect" style="color:var(--accent);">Connect Etsy to enable automatic purchase verification</a>';
+        : 'Etsy is not connected — automatic purchase verification is unavailable.';
+      etsyStatusEl.innerHTML = `${statusText} <a href="#" id="etsy-connect-link" style="color:var(--accent);">${connectLabel}</a>`;
+      document.getElementById('etsy-connect-link').addEventListener('click', (e) => {
+        e.preventDefault();
+        connectEtsy(accessToken);
+      });
     }
 
     async function init() {

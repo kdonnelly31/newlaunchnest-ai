@@ -12,8 +12,10 @@ import { createClient } from '@supabase/supabase-js';
 import crypto from 'crypto';
 import {
   createPkcePair,
-  writeEtsyOAuthState,
-  readEtsyOAuthState,
+  signPayload,
+  verifySignedPayload,
+  createConnectTicket,
+  verifyConnectTicket,
   exchangeCodeForToken,
   getValidEtsyToken,
 } from './lib/etsyOAuth.js';
@@ -305,7 +307,7 @@ async function getAllActiveListings(shopId) {
 
   // Etsy's sort_order query param only takes effect alongside a keyword/region
   // search, which this endpoint doesn't do -- sorting here is what actually works.
-  listings.sort((a, b) => b.created_timestamp - a.created_timestamp);
+  listings.sort((a, b) => (b.created_timestamp ?? 0) - (a.created_timestamp ?? 0));
   return listings;
 }
 
@@ -644,14 +646,23 @@ app.get('/auth/tiktok/callback', async (req, res) => {
   }
 });
 
+app.get('/api/etsy/connect-ticket', requireAdmin, (req, res) => {
+  res.json({ ticket: createConnectTicket(ETSY_SHARED_SECRET) });
+});
+
 app.get('/auth/etsy/connect', (req, res) => {
+  if (!supabaseAdmin) {
+    return res.status(503).send('Admin features are not configured on the server.');
+  }
   if (!ETSY_SELLER_SHOP_NAME) {
     return res.status(503).send('ETSY_SELLER_SHOP_NAME is not configured on the server.');
   }
+  if (!verifyConnectTicket(req.query.ticket, ETSY_SHARED_SECRET)) {
+    return res.status(403).send('This connect link is invalid or has expired. Go back to the admin panel and click Connect Etsy again.');
+  }
 
   const { codeVerifier, codeChallenge } = createPkcePair();
-  const state = crypto.randomBytes(16).toString('hex');
-  writeEtsyOAuthState({ codeVerifier, state });
+  const state = signPayload({ codeVerifier, nonce: crypto.randomBytes(8).toString('hex') }, ETSY_SHARED_SECRET);
 
   const url = new URL('https://www.etsy.com/oauth/connect');
   url.searchParams.set('response_type', 'code');
@@ -668,15 +679,15 @@ app.get('/auth/etsy/callback', async (req, res) => {
   const { code, state, error, error_description } = req.query;
   if (error) return res.status(400).send(`Etsy auth failed: ${error_description || error}`);
 
-  const saved = readEtsyOAuthState();
-  if (!saved || saved.state !== state) {
+  const statePayload = verifySignedPayload(state, ETSY_SHARED_SECRET);
+  if (!statePayload || typeof statePayload.codeVerifier !== 'string') {
     return res.status(400).send('Etsy auth failed: state mismatch. Try connecting again from the admin panel.');
   }
 
   try {
     const token = await exchangeCodeForToken({
       code,
-      codeVerifier: saved.codeVerifier,
+      codeVerifier: statePayload.codeVerifier,
       clientId: ETSY_API_KEY,
       redirectUri: ETSY_OAUTH_REDIRECT_URI,
     });
@@ -709,14 +720,19 @@ app.get('/auth/etsy/callback', async (req, res) => {
 app.get('/api/etsy/status', requireAdmin, async (req, res) => {
   const { data, error } = await supabaseAdmin
     .from('etsy_seller_connection')
-    .select('shop_id, connected_at')
+    .select('shop_id, connected_at, expires_at')
     .eq('id', 1)
     .maybeSingle();
   if (error) {
     console.error(error);
     return res.status(500).json({ error: error.message });
   }
-  res.json({ connected: !!data, shopId: data?.shop_id ?? null, connectedAt: data?.connected_at ?? null });
+  res.json({
+    connected: !!data,
+    shopId: data?.shop_id ?? null,
+    connectedAt: data?.connected_at ?? null,
+    expiresAt: data?.expires_at ?? null,
+  });
 });
 
 app.post('/api/verify-purchase', requireAuth, async (req, res) => {
@@ -727,6 +743,10 @@ app.post('/api/verify-purchase', requireAuth, async (req, res) => {
 
   if (req.profile.role === 'admin' || req.profile.status === 'approved') {
     return res.json({ approved: true });
+  }
+
+  if (req.profile.status === 'declined') {
+    return res.status(403).json({ error: "This account can't be activated automatically — contact support." });
   }
 
   if (!ETSY_PRODUCT_LISTING_ID) {
@@ -750,7 +770,7 @@ app.post('/api/verify-purchase', requireAuth, async (req, res) => {
       }
 
       const receiptRes = await fetch(`${ETSY_BASE}/shops/${etsyToken.shopId}/receipts/${receiptId}`, {
-        headers: { 'x-api-key': ETSY_API_KEY, Authorization: `Bearer ${etsyToken.accessToken}` },
+        headers: { 'x-api-key': API_KEY_HEADER, Authorization: `Bearer ${etsyToken.accessToken}` },
       });
       if (receiptRes.status !== 404) {
         if (!receiptRes.ok) {
