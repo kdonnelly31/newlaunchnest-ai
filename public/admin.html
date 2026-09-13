@@ -94,6 +94,7 @@
   </header>
 
   <p id="status">Loading…</p>
+  <p id="etsy-status" style="text-align:center; color:var(--muted); margin:0 0 1rem;"></p>
 
   <div class="table-wrap">
     <table id="profiles-table" style="display:none">
@@ -197,6 +198,16 @@
       return tr;
     }
 
+    async function loadEtsyStatus(accessToken) {
+      const etsyStatusEl = document.getElementById('etsy-status');
+      const res = await fetch('/api/etsy/status', { headers: { Authorization: `Bearer ${accessToken}` } });
+      if (!res.ok) return;
+      const data = await res.json();
+      etsyStatusEl.innerHTML = data.connected
+        ? `Etsy connected (shop ID ${data.shopId}).`
+        : '<a href="/auth/etsy/connect" style="color:var(--accent);">Connect Etsy to enable automatic purchase verification</a>';
+    }
+
     async function init() {
       const configRes = await fetch('/api/config');
       if (!configRes.ok) {
@@ -211,6 +222,8 @@
         window.location.href = '/login.html';
         return;
       }
+
+      loadEtsyStatus(session.access_token);
 
       const res = await fetch('/api/admin/profiles', {
         headers: { Authorization: `Bearer ${session.access_token}` },

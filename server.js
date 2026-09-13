@@ -9,12 +9,22 @@ import Anthropic from '@anthropic-ai/sdk';
 import { z } from 'zod';
 import { zodOutputFormat } from '@anthropic-ai/sdk/helpers/zod';
 import { createClient } from '@supabase/supabase-js';
+import crypto from 'crypto';
+import {
+  createPkcePair,
+  writeEtsyOAuthState,
+  readEtsyOAuthState,
+  exchangeCodeForToken,
+  getValidEtsyToken,
+} from './lib/etsyOAuth.js';
 
 const {
   ETSY_API_KEY, ETSY_SHARED_SECRET, ANTHROPIC_API_KEY, PINTEREST_ACCESS_TOKEN,
   FACEBOOK_PAGE_ACCESS_TOKEN, FACEBOOK_PAGE_ID, INSTAGRAM_BUSINESS_ACCOUNT_ID,
   TIKTOK_CLIENT_KEY, TIKTOK_CLIENT_SECRET, TIKTOK_REDIRECT_URI = 'http://localhost:3000/auth/tiktok/callback',
   SUPABASE_URL, SUPABASE_ANON_KEY, SUPABASE_SERVICE_ROLE_KEY,
+  ETSY_SELLER_SHOP_NAME, ETSY_PRODUCT_LISTING_ID,
+  ETSY_OAUTH_REDIRECT_URI = 'http://localhost:3000/auth/etsy/callback',
   PORT = 3000,
 } = process.env;
 
@@ -49,6 +59,10 @@ if (!SUPABASE_URL || !SUPABASE_ANON_KEY) {
 
 if (!SUPABASE_SERVICE_ROLE_KEY) {
   console.warn('Missing SUPABASE_SERVICE_ROLE_KEY. The admin panel will be unavailable.');
+}
+
+if (!ETSY_SELLER_SHOP_NAME || !ETSY_PRODUCT_LISTING_ID) {
+  console.warn('Missing ETSY_SELLER_SHOP_NAME or ETSY_PRODUCT_LISTING_ID. Automatic purchase verification will be unavailable.');
 }
 
 // Service-role client: bypasses row-level security entirely, so it's only ever
@@ -595,6 +609,81 @@ app.get('/auth/tiktok/callback', async (req, res) => {
     console.error(err);
     res.status(502).send(`Failed to connect TikTok: ${err.message}`);
   }
+});
+
+app.get('/auth/etsy/connect', (req, res) => {
+  if (!ETSY_SELLER_SHOP_NAME) {
+    return res.status(503).send('ETSY_SELLER_SHOP_NAME is not configured on the server.');
+  }
+
+  const { codeVerifier, codeChallenge } = createPkcePair();
+  const state = crypto.randomBytes(16).toString('hex');
+  writeEtsyOAuthState({ codeVerifier, state });
+
+  const url = new URL('https://www.etsy.com/oauth/connect');
+  url.searchParams.set('response_type', 'code');
+  url.searchParams.set('client_id', ETSY_API_KEY);
+  url.searchParams.set('redirect_uri', ETSY_OAUTH_REDIRECT_URI);
+  url.searchParams.set('scope', 'transactions_r');
+  url.searchParams.set('state', state);
+  url.searchParams.set('code_challenge', codeChallenge);
+  url.searchParams.set('code_challenge_method', 'S256');
+  res.redirect(url.toString());
+});
+
+app.get('/auth/etsy/callback', async (req, res) => {
+  const { code, state, error, error_description } = req.query;
+  if (error) return res.status(400).send(`Etsy auth failed: ${error_description || error}`);
+
+  const saved = readEtsyOAuthState();
+  if (!saved || saved.state !== state) {
+    return res.status(400).send('Etsy auth failed: state mismatch. Try connecting again from the admin panel.');
+  }
+
+  try {
+    const token = await exchangeCodeForToken({
+      code,
+      codeVerifier: saved.codeVerifier,
+      clientId: ETSY_API_KEY,
+      redirectUri: ETSY_OAUTH_REDIRECT_URI,
+    });
+
+    const shop = await findShopByName(ETSY_SELLER_SHOP_NAME);
+    if (!shop) {
+      throw new Error(`No Etsy shop found named "${ETSY_SELLER_SHOP_NAME}" — check the ETSY_SELLER_SHOP_NAME env var.`);
+    }
+
+    const expiresAt = new Date(Date.now() + token.expires_in * 1000).toISOString();
+    const { error: upsertError } = await supabaseAdmin
+      .from('etsy_seller_connection')
+      .upsert({
+        id: 1,
+        shop_id: shop.shop_id,
+        access_token: token.access_token,
+        refresh_token: token.refresh_token,
+        expires_at: expiresAt,
+        updated_at: new Date().toISOString(),
+      });
+    if (upsertError) throw new Error(upsertError.message);
+
+    res.redirect('/admin.html?etsy=connected');
+  } catch (err) {
+    console.error(err);
+    res.status(502).send(`Failed to connect Etsy: ${err.message}`);
+  }
+});
+
+app.get('/api/etsy/status', requireAdmin, async (req, res) => {
+  const { data, error } = await supabaseAdmin
+    .from('etsy_seller_connection')
+    .select('shop_id, connected_at')
+    .eq('id', 1)
+    .maybeSingle();
+  if (error) {
+    console.error(error);
+    return res.status(500).json({ error: error.message });
+  }
+  res.json({ connected: !!data, shopId: data?.shop_id ?? null, connectedAt: data?.connected_at ?? null });
 });
 
 app.get('/api/tiktok/status', requireApproved, (req, res) => {
