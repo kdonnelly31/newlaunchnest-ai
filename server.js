@@ -17,6 +17,7 @@ import {
   exchangeCodeForToken,
   getValidEtsyToken,
 } from './lib/etsyOAuth.js';
+import { evaluateReceipt } from './lib/verifyPurchase.js';
 
 const {
   ETSY_API_KEY, ETSY_SHARED_SECRET, ANTHROPIC_API_KEY, PINTEREST_ACCESS_TOKEN,
@@ -124,6 +125,38 @@ async function requireApproved(req, res, next) {
     .single();
   if (profileError || (profile?.role !== 'admin' && profile?.status !== 'approved')) {
     return res.status(403).json({ error: 'Your account is pending approval.' });
+  }
+
+  req.user = user;
+  req.profile = profile;
+  next();
+}
+
+// Like requireApproved, but deliberately does not check status/role -- this is
+// the one endpoint whose entire job is to move an account out of "requested".
+async function requireAuth(req, res, next) {
+  if (!supabaseAdmin) {
+    return res.status(503).json({ error: 'Auth is not configured on the server.' });
+  }
+
+  const authHeader = req.headers.authorization || '';
+  const token = authHeader.startsWith('Bearer ') ? authHeader.slice(7) : null;
+  if (!token) {
+    return res.status(401).json({ error: 'Missing Authorization header.' });
+  }
+
+  const { data: { user }, error: userError } = await supabaseAdmin.auth.getUser(token);
+  if (userError || !user) {
+    return res.status(401).json({ error: 'Invalid or expired session.' });
+  }
+
+  const { data: profile, error: profileError } = await supabaseAdmin
+    .from('profiles')
+    .select('id, email, role, status')
+    .eq('id', user.id)
+    .single();
+  if (profileError || !profile) {
+    return res.status(401).json({ error: 'No profile found for this account.' });
   }
 
   req.user = user;
@@ -684,6 +717,73 @@ app.get('/api/etsy/status', requireAdmin, async (req, res) => {
     return res.status(500).json({ error: error.message });
   }
   res.json({ connected: !!data, shopId: data?.shop_id ?? null, connectedAt: data?.connected_at ?? null });
+});
+
+app.post('/api/verify-purchase', requireAuth, async (req, res) => {
+  const receiptId = String(req.body?.receiptId ?? '').trim();
+  if (!/^\d+$/.test(receiptId)) {
+    return res.status(400).json({ error: 'Enter a valid Etsy order number.' });
+  }
+
+  if (req.profile.role === 'admin' || req.profile.status === 'approved') {
+    return res.json({ approved: true });
+  }
+
+  if (!ETSY_PRODUCT_LISTING_ID) {
+    return res.status(503).json({ error: 'Purchase verification is temporarily unavailable — contact support.' });
+  }
+
+  try {
+    const { data: existingClaim, error: claimError } = await supabaseAdmin
+      .from('profiles')
+      .select('id')
+      .eq('etsy_receipt_id', receiptId)
+      .neq('id', req.user.id)
+      .maybeSingle();
+    if (claimError) throw new Error(claimError.message);
+
+    let receipt = null;
+    if (!existingClaim) {
+      const etsyToken = await getValidEtsyToken(supabaseAdmin, ETSY_API_KEY);
+      if (!etsyToken) {
+        return res.status(503).json({ error: 'Purchase verification is temporarily unavailable — contact support.' });
+      }
+
+      const receiptRes = await fetch(`${ETSY_BASE}/shops/${etsyToken.shopId}/receipts/${receiptId}`, {
+        headers: { 'x-api-key': ETSY_API_KEY, Authorization: `Bearer ${etsyToken.accessToken}` },
+      });
+      if (receiptRes.status !== 404) {
+        if (!receiptRes.ok) {
+          throw new Error(`Etsy API ${receiptRes.status}: ${await receiptRes.text()}`);
+        }
+        receipt = await receiptRes.json();
+      }
+    }
+
+    const result = evaluateReceipt({
+      receipt,
+      listingId: ETSY_PRODUCT_LISTING_ID,
+      claimedByOtherUser: !!existingClaim,
+    });
+    if (!result.ok) {
+      return res.status(result.status).json({ error: result.message });
+    }
+
+    const { error: approveError } = await supabaseAdmin
+      .from('profiles')
+      .update({
+        status: 'approved',
+        etsy_receipt_id: receiptId,
+        purchase_verified_at: new Date().toISOString(),
+      })
+      .eq('id', req.user.id);
+    if (approveError) throw new Error(approveError.message);
+
+    res.json({ approved: true });
+  } catch (err) {
+    console.error(err);
+    res.status(502).json({ error: 'Something went wrong checking your order — try again in a moment.' });
+  }
 });
 
 app.get('/api/tiktok/status', requireApproved, (req, res) => {
