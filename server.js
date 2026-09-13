@@ -256,6 +256,9 @@ async function getAllActiveListings(shopId) {
   );
   for (const page of pages) listings.push(...page.results);
 
+  // Etsy's sort_order query param only takes effect alongside a keyword/region
+  // search, which this endpoint doesn't do -- sorting here is what actually works.
+  listings.sort((a, b) => b.created_timestamp - a.created_timestamp);
   return listings;
 }
 
