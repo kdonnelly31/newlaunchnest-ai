@@ -71,8 +71,12 @@ if (!ETSY_SELLER_SHOP_NAME || !ETSY_PRODUCT_LISTING_ID) {
 }
 
 // Service-role client: bypasses row-level security entirely, so it's only ever
-// used server-side (never sent to the browser) and only after verifying the
-// caller is an admin via requireAdmin below.
+// used server-side and never sent to the browser. Three legitimate uses here:
+// admin-only routes (gated by requireAdmin), routes gated by requireApproved /
+// requireAuth (which use it to verify the caller's own token and profile), and
+// the fully public GET /p/:id, whose entire job is public serving -- it
+// deliberately bypasses the owner-only select policy on landing_pages, the same
+// reasoning already used for etsy_seller_connection.
 const supabaseAdmin = SUPABASE_URL && SUPABASE_SERVICE_ROLE_KEY
   ? createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, { auth: { persistSession: false } })
   : null;
@@ -875,7 +879,6 @@ app.post('/api/tiktok/post', requireApproved, upload.single('video'), async (req
   }
 });
 
-
 app.post('/api/landing-pages', requireApproved, async (req, res) => {
   if (!anthropic) {
     return res.status(503).json({ error: 'ANTHROPIC_API_KEY is not configured on the server.' });
@@ -893,6 +896,13 @@ app.post('/api/landing-pages', requireApproved, async (req, res) => {
     : [];
   if (resolvedPlatforms.length === 0) resolvedPlatforms.push('instagram');
 
+  // Safe under the service-role client even though create_landing_page_allowed
+  // guards with `if p_user_id <> auth.uid() then raise`: with no JWT, auth.uid()
+  // is NULL, `p_user_id <> NULL` is NULL, and PL/pgSQL's IF treats NULL as false,
+  // so the guard never fires and the explicitly-passed id is used. That id is
+  // req.user.id, already authenticated by requireApproved above (never client-
+  // supplied) -- but tightening that guard (e.g. to `is distinct from`) would
+  // silently start rejecting every call here.
   const { data: allowance, error: allowanceError } = await supabaseAdmin
     .rpc('create_landing_page_allowed', { p_user_id: req.user.id });
   if (allowanceError) {
@@ -945,7 +955,16 @@ app.post('/api/landing-pages', requireApproved, async (req, res) => {
 
     const content = { listing, copy, price, colors };
 
-    const { data: row, error: insertError } = await supabaseAdmin
+    // Insert as the caller, not the service role: the "Users can insert landing
+    // pages within their allowance" RLS policy is the real paywall enforcement
+    // point, and service-role inserts bypass RLS entirely -- which would let
+    // concurrent requests that all passed the pre-check above each mint a page.
+    const supabaseAsUser = createClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
+      auth: { persistSession: false },
+      global: { headers: { Authorization: req.headers.authorization } },
+    });
+
+    const { data: row, error: insertError } = await supabaseAsUser
       .from('landing_pages')
       .insert({ user_id: req.user.id, listing_id: listing.listing_id, content })
       .select('id')
@@ -973,17 +992,25 @@ app.get('/p/:id', async (req, res) => {
     return res.status(503).send('Landing pages are not configured on the server.');
   }
 
-  const { data: row, error } = await supabaseAdmin
-    .from('landing_pages')
-    .select('content')
-    .eq('id', req.params.id)
-    .maybeSingle();
+  try {
+    const { data: row, error } = await supabaseAdmin
+      .from('landing_pages')
+      .select('content')
+      .eq('id', req.params.id)
+      .maybeSingle();
 
-  if (error || !row?.content) {
-    return res.status(404).send(renderNotFoundPage());
+    if (error || !row?.content) {
+      return res.status(404).send(renderNotFoundPage());
+    }
+
+    res.set('Content-Type', 'text/html').send(renderLandingPageDocument(row.content));
+  } catch (err) {
+    // A malformed content snapshot can make rendering throw. This route is
+    // public and unauthenticated, and an uncaught async throw here would take
+    // down the whole process -- so fall back to the same 404 page.
+    console.error(err);
+    res.status(404).send(renderNotFoundPage());
   }
-
-  res.set('Content-Type', 'text/html').send(renderLandingPageDocument(row.content));
 });
 
 // Non-admin customers are restricted to the one shop an admin assigned them

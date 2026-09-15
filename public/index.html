@@ -426,8 +426,8 @@
           });
           }
         } else {
-          // Exposed so the plain <script> below can check/consume the page
-          // allowance (create_landing_page_allowed RPC, landing_pages insert).
+          // Exposed so the plain <script> below can check the page allowance
+          // (create_landing_page_allowed RPC).
           window.supabaseClient = supabase;
           window.currentUserId = session.user.id;
 
