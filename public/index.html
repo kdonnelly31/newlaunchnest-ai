@@ -1131,8 +1131,26 @@
           return;
         }
 
+        // Best-effort: theme the page with a color pulled from the shop's own
+        // icon/banner/listing photo. Never blocks page creation on failure --
+        // a bad or missing image just keeps the default theme.
+        let colors = null;
+        const brandImageUrl = l.shop?.icon_url_fullxfull || l.shop?.image_url_760x100 || l.images?.[0]?.url_fullxfull;
+        if (brandImageUrl) {
+          try {
+            const colorRes = await authedFetch('/api/brand-color', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ imageUrl: brandImageUrl }),
+            });
+            if (colorRes.ok) colors = await colorRes.json();
+          } catch {
+            colors = null;
+          }
+        }
+
         newTab.document.open();
-        newTab.document.write(buildLandingPageDocument(l, copy, price));
+        newTab.document.write(buildLandingPageDocument(l, copy, price, colors));
         newTab.document.close();
 
         // RLS re-checks the allowance on this insert independently of the
@@ -1155,8 +1173,13 @@
     // inlined) for the new tab createLandingPage() opens — the new tab has
     // no access to this page's script scope once it navigates its own
     // document, so the posting handlers are serialized in via .toString().
-    function buildLandingPageDocument(l, copy, price) {
-      const styles = document.getElementById('lp-styles').textContent;
+    function buildLandingPageDocument(l, copy, price, colors) {
+      let styles = document.getElementById('lp-styles').textContent;
+      if (colors?.accent && colors?.accentWarm) {
+        styles = styles
+          .replace(/--lp-accent:\s*#[0-9a-fA-F]{6};/, `--lp-accent: ${colors.accent};`)
+          .replace(/--lp-accent-warm:\s*#[0-9a-fA-F]{6};/, `--lp-accent-warm: ${colors.accentWarm};`);
+      }
       const bodyHtml = renderLandingPage(l, copy, price);
       // Neutralize "<" so nothing in listing/copy data (both external,
       // untrusted text) can break out of the inline <script> block below.
