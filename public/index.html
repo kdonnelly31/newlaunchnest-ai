@@ -531,7 +531,17 @@
         const data = await res.json();
 
         if (!res.ok) {
-          status.textContent = data.error || 'Something went wrong.';
+          // A 404 on a restricted (locked, pre-filled) shop field means the
+          // shop name stored on this account doesn't exist on Etsy at all --
+          // most likely a typo made at checkout, not something they can fix
+          // by retyping (the field is read-only). An admin's free-typed
+          // search getting the same 404 is just a live typo, so it keeps the
+          // plain message instead.
+          if (res.status === 404 && window.shopSearchRestricted) {
+            status.innerHTML = `We couldn't find an Etsy shop matching the name on your account ("${escapeHtml(shopName)}"). This is usually a typo made at checkout — <a href="https://www.etsy.com/shop/LaunchNestAI" target="_blank" rel="noopener noreferrer" style="color:var(--accent);">reach out through Etsy Messages</a> so we can fix it.`;
+          } else {
+            status.textContent = data.error || 'Something went wrong.';
+          }
           return;
         }
 
