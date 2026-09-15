@@ -26,7 +26,7 @@ const {
   FACEBOOK_PAGE_ACCESS_TOKEN, FACEBOOK_PAGE_ID, INSTAGRAM_BUSINESS_ACCOUNT_ID,
   TIKTOK_CLIENT_KEY, TIKTOK_CLIENT_SECRET, TIKTOK_REDIRECT_URI = 'http://localhost:3000/auth/tiktok/callback',
   SUPABASE_URL, SUPABASE_ANON_KEY, SUPABASE_SERVICE_ROLE_KEY,
-  ETSY_SELLER_SHOP_NAME, ETSY_PRODUCT_LISTING_ID,
+  ETSY_SELLER_SHOP_NAME, ETSY_PRODUCT_LISTING_ID, ETSY_SHOP_NAME_QUESTION_ID,
   ETSY_OAUTH_REDIRECT_URI = 'http://localhost:3000/auth/etsy/callback',
   PORT = 3000,
 } = process.env;
@@ -784,6 +784,7 @@ app.post('/api/verify-purchase', requireAuth, async (req, res) => {
       receipt,
       listingId: ETSY_PRODUCT_LISTING_ID,
       claimedByOtherUser: !!existingClaim,
+      shopNameQuestionId: ETSY_SHOP_NAME_QUESTION_ID,
     });
     if (!result.ok) {
       return res.status(result.status).json({ error: result.message });
@@ -795,6 +796,10 @@ app.post('/api/verify-purchase', requireAuth, async (req, res) => {
         status: 'approved',
         etsy_receipt_id: receiptId,
         purchase_verified_at: new Date().toISOString(),
+        // Falls back to the existing manual admin field when the buyer's
+        // answer to the "Your Etsy Shop Name" personalization question is
+        // missing (e.g. an older order placed before that question existed).
+        ...(result.shopName ? { etsy_shop_name: result.shopName } : {}),
       })
       .eq('id', req.user.id);
     if (approveError) {
