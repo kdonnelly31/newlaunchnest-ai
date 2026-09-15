@@ -931,6 +931,98 @@ app.post('/api/brand-color', requireApproved, async (req, res) => {
   }
 });
 
+app.post('/api/landing-pages', requireApproved, async (req, res) => {
+  if (!anthropic) {
+    return res.status(503).json({ error: 'ANTHROPIC_API_KEY is not configured on the server.' });
+  }
+  if (!supabaseAdmin) {
+    return res.status(503).json({ error: 'Landing pages are not configured on the server.' });
+  }
+
+  const { listingId, platforms } = req.body ?? {};
+  if (!listingId) {
+    return res.status(400).json({ error: 'Missing listingId.' });
+  }
+  const resolvedPlatforms = Array.isArray(platforms)
+    ? [...new Set(platforms.filter(p => SOCIAL_PLATFORMS.includes(p)))]
+    : [];
+  if (resolvedPlatforms.length === 0) resolvedPlatforms.push('instagram');
+
+  const { data: allowance, error: allowanceError } = await supabaseAdmin
+    .rpc('create_landing_page_allowed', { p_user_id: req.user.id });
+  if (allowanceError) {
+    console.error(allowanceError);
+    return res.status(500).json({ error: allowanceError.message });
+  }
+  if (!allowance?.[0]?.allowed) {
+    return res.status(403).json({ error: "You've reached your page limit — purchase again to unlock 3 more pages." });
+  }
+
+  let listing;
+  try {
+    listing = await etsyFetch(`/listings/${listingId}?includes=Images,Shop`);
+  } catch (err) {
+    console.error(err);
+    return res.status(502).json({ error: err.message });
+  }
+  if (!assertShopAllowed(req, res, listing.shop?.shop_name || '')) return;
+
+  try {
+    const copy = await generateLandingCopy(
+      {
+        title: listing.title,
+        description: listing.description,
+        price: listing.price,
+        currency: listing.price?.currency_code,
+        tags: listing.tags,
+        materials: listing.materials,
+        shopName: listing.shop?.shop_name,
+      },
+      resolvedPlatforms,
+    );
+
+    const price = listing.price
+      ? (Number(listing.price.amount) / Number(listing.price.divisor)).toFixed(2)
+      : null;
+
+    // Best-effort: theme the page with a color pulled from the shop's own
+    // icon/banner/listing photo. Never blocks page creation on failure --
+    // a bad or missing image just keeps the default theme.
+    let colors = null;
+    const brandImageUrl = listing.shop?.icon_url_fullxfull || listing.shop?.image_url_760x100 || listing.images?.[0]?.url_fullxfull;
+    if (brandImageUrl) {
+      try {
+        colors = await extractAccentColor(brandImageUrl);
+      } catch (err) {
+        console.error('Brand color extraction failed, using default theme:', err.message);
+      }
+    }
+
+    const content = { listing, copy, price, colors };
+
+    const { data: row, error: insertError } = await supabaseAdmin
+      .from('landing_pages')
+      .insert({ user_id: req.user.id, listing_id: listing.listing_id, content })
+      .select('id')
+      .single();
+    if (insertError) {
+      console.error(insertError);
+      return res.status(500).json({ error: insertError.message });
+    }
+
+    res.json({ id: row.id, url: `/p/${row.id}` });
+  } catch (err) {
+    console.error(err);
+    if (err instanceof Anthropic.AuthenticationError) {
+      return res.status(502).json({ error: 'Invalid Anthropic API key.' });
+    }
+    if (err instanceof Anthropic.RateLimitError) {
+      return res.status(502).json({ error: 'Rate limited by Anthropic API — try again shortly.' });
+    }
+    res.status(502).json({ error: err.message });
+  }
+});
+
 // Non-admin customers are restricted to the one shop an admin assigned them
 // (etsy_shop_name) -- Etsy's API has no way to verify shop ownership, so this
 // is the actual enforcement boundary; the UI just reflects it, doesn't create it.
