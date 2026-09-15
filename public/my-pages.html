@@ -1,0 +1,243 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>My Landing Pages · Find My Shop</title>
+<style>
+  :root {
+    --bg: #fdfaf6;
+    --ink: #222;
+    --muted: #6b6b6b;
+    --accent: #d5641c;
+    --card-bg: #ffffff;
+    --border: #eee2d6;
+    --error: #b3261e;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    background: var(--bg);
+    color: var(--ink);
+  }
+  header {
+    padding: 2rem 1.5rem 1rem;
+    text-align: center;
+  }
+  header h1 { margin: 0 0 .25rem; font-size: 1.8rem; }
+  header p { margin: 0; color: var(--muted); }
+  #status {
+    text-align: center;
+    color: var(--muted);
+    padding: 0 1rem 1rem;
+  }
+  #status.error { color: var(--error); }
+  .back-link {
+    display: block;
+    text-align: center;
+    color: var(--accent);
+    text-decoration: none;
+    font-size: .9rem;
+    margin-bottom: 1rem;
+  }
+  .pages-grid {
+    max-width: 900px;
+    margin: 0 auto;
+    padding: 0 1.5rem 3rem;
+    display: grid;
+    gap: 1rem;
+  }
+  .page-card {
+    display: flex;
+    gap: 1rem;
+    align-items: center;
+    background: var(--card-bg);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 1rem;
+  }
+  .page-card img {
+    width: 72px;
+    height: 72px;
+    object-fit: cover;
+    border-radius: 8px;
+    background: #f0ece6;
+    flex: 0 0 auto;
+  }
+  .page-card .info {
+    flex: 1;
+    min-width: 0;
+  }
+  .page-card .info h3 {
+    margin: 0 0 .2rem;
+    font-size: 1rem;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .page-card .info .date {
+    color: var(--muted);
+    font-size: .8rem;
+  }
+  .page-card .actions {
+    display: flex;
+    gap: .5rem;
+    flex: 0 0 auto;
+  }
+  .page-card .actions a,
+  .page-card .actions button {
+    padding: .45rem .9rem;
+    border-radius: 6px;
+    font-size: .85rem;
+    text-decoration: none;
+    cursor: pointer;
+    border: 1px solid var(--border);
+    background: white;
+    color: var(--ink);
+    font-family: inherit;
+  }
+  .page-card .actions a.primary {
+    background: var(--accent);
+    color: white;
+    border-color: var(--accent);
+  }
+  .page-card.unavailable .info h3 {
+    color: var(--muted);
+  }
+</style>
+</head>
+<body>
+  <a id="logout-link" href="#" style="display:none; position:fixed; top:1rem; right:1.25rem; font-size:.85rem; color:var(--muted); text-decoration:none;">Log out</a>
+
+  <header>
+    <h1>My Landing Pages</h1>
+    <p>Every landing page you've created, with links you can share or revisit anytime.</p>
+  </header>
+
+  <a class="back-link" href="/index.html">← Back to shop search</a>
+  <p id="status">Loading your pages…</p>
+  <div class="pages-grid" id="pages-grid" style="display:none;"></div>
+
+  <script type="module">
+    import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
+
+    const status = document.getElementById('status');
+    const grid = document.getElementById('pages-grid');
+
+    function escapeHtml(str) {
+      const div = document.createElement('div');
+      div.textContent = str ?? '';
+      return div.innerHTML;
+    }
+
+    function renderCard(row) {
+      const created = new Date(row.created_at).toLocaleDateString(undefined, {
+        year: 'numeric', month: 'short', day: 'numeric',
+      });
+
+      if (!row.content) {
+        return `
+          <div class="page-card unavailable">
+            <div class="info">
+              <h3>Early test page — no link available</h3>
+              <div class="date">Created ${created}</div>
+            </div>
+          </div>
+        `;
+      }
+
+      const { listing, copy } = row.content;
+      const title = copy?.headline || listing?.title || 'Untitled page';
+      const image = listing?.images?.[0]?.url_570xN || listing?.images?.[0]?.url_fullxfull || '';
+      const url = `/p/${row.id}`;
+
+      return `
+        <div class="page-card">
+          ${image ? `<img src="${escapeHtml(image)}" alt="" />` : ''}
+          <div class="info">
+            <h3>${escapeHtml(title)}</h3>
+            <div class="date">Created ${created}</div>
+          </div>
+          <div class="actions">
+            <button type="button" class="copy-btn" data-url="${escapeHtml(url)}">Copy link</button>
+            <a class="primary" href="${escapeHtml(url)}" target="_blank" rel="noopener noreferrer">View page →</a>
+          </div>
+        </div>
+      `;
+    }
+
+    async function init() {
+      const configRes = await fetch('/api/config');
+      if (!configRes.ok) {
+        status.textContent = 'This page is not available — missing site configuration.';
+        status.className = 'error';
+        return;
+      }
+      const { supabaseUrl, supabaseAnonKey } = await configRes.json();
+      // Reads from either storage since "Remember me" on the login page may have
+      // put the session in sessionStorage instead of the default localStorage.
+      const supabase = createClient(supabaseUrl, supabaseAnonKey, {
+        auth: {
+          storage: {
+            getItem: (key) => localStorage.getItem(key) ?? sessionStorage.getItem(key),
+            setItem: (key, value) => localStorage.setItem(key, value),
+            removeItem: (key) => { localStorage.removeItem(key); sessionStorage.removeItem(key); },
+          },
+        },
+      });
+
+      const { data: { session } } = await supabase.auth.getSession();
+      if (!session) {
+        window.location.href = '/login.html';
+        return;
+      }
+
+      const logoutLink = document.getElementById('logout-link');
+      logoutLink.style.display = 'block';
+      logoutLink.addEventListener('click', async (e) => {
+        e.preventDefault();
+        await supabase.auth.signOut();
+        window.location.href = '/login.html';
+      });
+
+      // RLS ("Users can view their own landing pages") restricts this to the
+      // caller's own rows -- no server endpoint needed for a read this simple.
+      const { data: rows, error } = await supabase
+        .from('landing_pages')
+        .select('id, created_at, content')
+        .order('created_at', { ascending: false });
+
+      if (error) {
+        status.textContent = 'Could not load your pages: ' + error.message;
+        status.className = 'error';
+        return;
+      }
+
+      if (!rows.length) {
+        status.textContent = "You haven't created any landing pages yet.";
+        return;
+      }
+
+      status.style.display = 'none';
+      grid.style.display = 'grid';
+      grid.innerHTML = rows.map(renderCard).join('');
+
+      grid.addEventListener('click', async (e) => {
+        const btn = e.target.closest('.copy-btn');
+        if (!btn) return;
+        const original = btn.textContent;
+        try {
+          await navigator.clipboard.writeText(new URL(btn.dataset.url, window.location.origin).href);
+          btn.textContent = 'Copied!';
+        } catch {
+          btn.textContent = 'Copy failed';
+        }
+        setTimeout(() => { btn.textContent = original; }, 1500);
+      });
+    }
+
+    init();
+  </script>
+</body>
+</html>

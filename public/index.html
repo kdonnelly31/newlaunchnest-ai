@@ -306,7 +306,8 @@
 </style>
 </head>
 <body>
-  <span id="pages-remaining" style="display:none; position:fixed; top:1rem; right:11.5rem; font-size:.85rem; color:var(--muted);"></span>
+  <span id="pages-remaining" style="display:none; position:fixed; top:1rem; right:15rem; font-size:.85rem; color:var(--muted);"></span>
+  <a id="my-pages-link" href="/my-pages.html" style="display:none; position:fixed; top:1rem; right:9rem; font-size:.85rem; color:var(--muted); text-decoration:none;">My Pages</a>
   <a id="admin-link" href="/admin.html" style="display:none; position:fixed; top:1rem; right:5rem; font-size:.85rem; color:var(--muted); text-decoration:none;">Admin</a>
   <a id="logout-link" href="#" style="display:none; position:fixed; top:1rem; right:1.25rem; font-size:.85rem; color:var(--muted); text-decoration:none;">Log out</a>
 
@@ -346,6 +347,7 @@
 
         const logoutLink = document.getElementById('logout-link');
         logoutLink.style.display = 'block';
+        document.getElementById('my-pages-link').style.display = 'block';
         logoutLink.addEventListener('click', async (e) => {
           e.preventDefault();
           await supabase.auth.signOut();
