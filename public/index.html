@@ -535,7 +535,14 @@
           return;
         }
 
-        status.textContent = `${data.listings.length} active listing(s) found.`;
+        // Etsy's own shop summary can say there's an active listing while its
+        // separate /listings/active search index hasn't caught up yet -- when
+        // that happens, say so instead of implying the shop has no listings.
+        if (data.listings.length === 0 && data.shop.etsyReportedActiveCount > 0) {
+          status.textContent = "Etsy shows you have an active listing, but it hasn't appeared in their search results yet — this is a known delay on Etsy's side. Try again in a few minutes.";
+        } else {
+          status.textContent = `${data.listings.length} active listing(s) found.`;
+        }
 
         // Lock the field to the shop's official name (Etsy's casing may differ
         // from what was typed) so it can't be edited mid-session by accident.

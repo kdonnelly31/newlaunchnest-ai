@@ -1060,6 +1060,11 @@ app.get('/api/shop/:shopName', requireApproved, async (req, res) => {
         title: shop.title,
         icon: shop.icon_url_fullxfull,
         listingCount: rawListings.length,
+        // Etsy's own shop-summary counter -- kept separate from listingCount
+        // (the actual /listings/active results) so the client can detect when
+        // Etsy's search index hasn't caught up yet: the summary says there's
+        // an active listing, but the detailed endpoint returns none.
+        etsyReportedActiveCount: shop.listing_active_count ?? 0,
       },
       listings: rawListings.map(listing => formatListing(listing, imagesByListingId)),
     });
