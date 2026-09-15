@@ -21,6 +21,7 @@ import {
 } from './lib/etsyOAuth.js';
 import { evaluateReceipt } from './lib/verifyPurchase.js';
 import { extractAccentColor } from './lib/brandColor.js';
+import { renderLandingPageDocument, renderNotFoundPage } from './lib/landingPageTemplate.js';
 
 const {
   ETSY_API_KEY, ETSY_SHARED_SECRET, ANTHROPIC_API_KEY, PINTEREST_ACCESS_TOKEN,
@@ -1021,6 +1022,24 @@ app.post('/api/landing-pages', requireApproved, async (req, res) => {
     }
     res.status(502).json({ error: err.message });
   }
+});
+
+app.get('/p/:id', async (req, res) => {
+  if (!supabaseAdmin) {
+    return res.status(503).send('Landing pages are not configured on the server.');
+  }
+
+  const { data: row, error } = await supabaseAdmin
+    .from('landing_pages')
+    .select('content')
+    .eq('id', req.params.id)
+    .maybeSingle();
+
+  if (error || !row?.content) {
+    return res.status(404).send(renderNotFoundPage());
+  }
+
+  res.set('Content-Type', 'text/html').send(renderLandingPageDocument(row.content));
 });
 
 // Non-admin customers are restricted to the one shop an admin assigned them
