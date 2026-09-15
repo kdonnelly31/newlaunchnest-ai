@@ -875,62 +875,6 @@ app.post('/api/tiktok/post', requireApproved, upload.single('video'), async (req
   }
 });
 
-app.post('/api/landing-copy', requireApproved, async (req, res) => {
-  if (!anthropic) {
-    return res.status(503).json({ error: 'ANTHROPIC_API_KEY is not configured on the server.' });
-  }
-
-  const { title, description, price, currency, tags, materials, shopName, platforms } = req.body ?? {};
-  if (!title || !description) {
-    return res.status(400).json({ error: 'Missing listing title/description.' });
-  }
-  const resolvedPlatforms = Array.isArray(platforms)
-    ? [...new Set(platforms.filter(p => SOCIAL_PLATFORMS.includes(p)))]
-    : [];
-  if (resolvedPlatforms.length === 0) resolvedPlatforms.push('instagram');
-
-  try {
-    const copy = await generateLandingCopy({ title, description, price, currency, tags, materials, shopName }, resolvedPlatforms);
-    res.json(copy);
-  } catch (err) {
-    console.error(err);
-    if (err instanceof Anthropic.AuthenticationError) {
-      return res.status(502).json({ error: 'Invalid Anthropic API key.' });
-    }
-    if (err instanceof Anthropic.RateLimitError) {
-      return res.status(502).json({ error: 'Rate limited by Anthropic API — try again shortly.' });
-    }
-    res.status(502).json({ error: err.message });
-  }
-});
-
-// Used by "Create Landing Page" to theme the generated page with the buyer's
-// own shop/listing colors. Restricted to Etsy's own image CDN since this is
-// a server-side fetch of a client-supplied URL -- without the allowlist, an
-// authenticated caller could use it to probe internal network addresses.
-app.post('/api/brand-color', requireApproved, async (req, res) => {
-  const { imageUrl } = req.body ?? {};
-  if (typeof imageUrl !== 'string') {
-    return res.status(400).json({ error: 'Missing imageUrl.' });
-  }
-
-  let parsed;
-  try {
-    parsed = new URL(imageUrl);
-  } catch {
-    return res.status(400).json({ error: 'Invalid imageUrl.' });
-  }
-  if (parsed.protocol !== 'https:' || !parsed.hostname.endsWith('.etsystatic.com')) {
-    return res.status(400).json({ error: 'imageUrl must be an Etsy-hosted image.' });
-  }
-
-  try {
-    res.json(await extractAccentColor(imageUrl));
-  } catch (err) {
-    console.error(err);
-    res.status(502).json({ error: 'Could not read that image.' });
-  }
-});
 
 app.post('/api/landing-pages', requireApproved, async (req, res) => {
   if (!anthropic) {
