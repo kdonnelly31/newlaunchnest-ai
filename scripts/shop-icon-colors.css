@@ -1,0 +1,10 @@
+/* LaunchNestAI brand colors, sampled from the Etsy listing graphic
+   (scripts/extract-shop-icon-colors.mjs found the raw candidates;
+   these two were picked out by hand as the real brand colors --
+   the rest were just the mockup's light gray/cream background). */
+:root {
+  --brand-teal: #0b3436;   /* dark background bar behind the logo */
+  --brand-gold: #bb9763;   /* "AI" wordmark, checkmarks, divider line */
+  --brand-cream: #f7f4ee;  /* light background to pair with the teal */
+  --brand-white: #ffffff;  /* text on dark teal */
+}
