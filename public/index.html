@@ -167,7 +167,6 @@
     color: var(--muted);
   }
   #listing-field { flex: 3; }
-  #social-field { flex: 1; min-width: 150px; }
   .listing-picker select {
     width: 100%;
     padding: .6rem .8rem;
@@ -313,7 +312,7 @@
 
   <header>
     <h1>Find My Shop</h1>
-    <p>Just enter your Etsy shop name — we'll pull in your active listings automatically, so you can pick the one you want to promote.</p>
+    <p>Your Etsy shop is already on file — we'll display your active listings automatically, so you can select the product you want to promote, create a landing page for it, and use it wherever you want. Coming soon: the option to post your professional landing page directly to social media from this site.</p>
   </header>
 
   <script type="module">
@@ -482,16 +481,6 @@
           <option value="">Select a listing to see full details…</option>
         </select>
       </div>
-      <div class="picker-field" id="social-field">
-        <label for="social-select">Social Media</label>
-        <select id="social-select">
-          <option value="tiktok">TikTok</option>
-          <option value="facebook">Facebook</option>
-          <option value="instagram">Instagram</option>
-          <option value="pinterest">Pinterest</option>
-          <option value="all">All</option>
-        </select>
-      </div>
     </div>
   </div>
 
@@ -508,7 +497,6 @@
     const grid = document.getElementById('grid');
     const listingPicker = document.getElementById('listing-picker');
     const listingSelect = document.getElementById('listing-select');
-    const socialSelect = document.getElementById('social-select');
     const detail = document.getElementById('detail');
     let currentListing = null;
     let currentListingId = null;
@@ -769,13 +757,11 @@
       btn.disabled = true;
       btn.textContent = 'Writing your landing page…';
 
-      const platforms = socialSelect.value === 'all' ? ALL_PLATFORMS : [socialSelect.value];
-
       try {
         const res = await authedFetch('/api/landing-pages', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ listingId: currentListingId, platforms }),
+          body: JSON.stringify({ listingId: currentListingId }),
         });
         const data = await res.json();
 
@@ -793,8 +779,6 @@
         btn.textContent = originalLabel;
       }
     }
-
-    const ALL_PLATFORMS = ['tiktok', 'facebook', 'instagram', 'pinterest'];
 
     function kvGrid(pairs) {
       return `<div class="kv-grid">${pairs.map(([k, v]) => `
