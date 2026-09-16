@@ -220,6 +220,54 @@
     opacity: .6;
     cursor: wait;
   }
+  #detail .share-panel {
+    margin: 1rem 0;
+    display: grid;
+    gap: 1rem;
+  }
+  #detail .share-platform h4 {
+    margin: 0 0 .4rem;
+    font-size: .9rem;
+  }
+  #detail .share-caption {
+    width: 100%;
+    min-height: 4.5rem;
+    padding: .5rem .6rem;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    font-family: inherit;
+    font-size: .85rem;
+    resize: vertical;
+    box-sizing: border-box;
+  }
+  #detail .share-hint {
+    margin: .4rem 0 0;
+    font-size: .78rem;
+    color: var(--muted);
+  }
+  #detail .share-actions {
+    display: flex;
+    gap: .5rem;
+    margin-top: .5rem;
+  }
+  #detail .platform-share-btn,
+  #detail .copy-caption-btn {
+    border: 1px solid var(--accent);
+    color: var(--accent);
+    background: transparent;
+    border-radius: 999px;
+    padding: .4rem 1rem;
+    font-size: .82rem;
+    font-weight: 600;
+    cursor: pointer;
+    text-decoration: none;
+    transition: background .15s ease, color .15s ease;
+  }
+  #detail .platform-share-btn:hover,
+  #detail .copy-caption-btn:hover {
+    background: var(--accent);
+    color: white;
+  }
   #detail .images {
     display: flex;
     gap: .6rem;
@@ -312,11 +360,16 @@
 
   <header>
     <h1>Find My Shop</h1>
-    <p>Your Etsy shop is already on file — we'll display your active listings automatically, so you can select the product you want to promote, create a landing page for it, and use it wherever you want. Coming soon: the option to post your professional landing page directly to social media from this site.</p>
+    <p>Your Etsy shop is already on file — we'll display your active listings automatically, so you can select the product you want to promote, create a landing page for it, and share it straight to social media from this site.</p>
   </header>
 
   <script type="module">
     import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
+    import * as shareLinks from './shareLinks.js';
+
+    // Exposed so the plain <script> below (app functionality) can use it —
+    // same pattern as window.authedFetch/window.supabaseClient below.
+    window.shareLinks = shareLinks;
 
     const configRes = await fetch('/api/config');
     if (configRes.ok) {
@@ -606,6 +659,15 @@
         currentListingId = listingId;
         detail.innerHTML = renderListingDetail(listing);
         document.getElementById('create-landing-btn').addEventListener('click', createLandingPage);
+        // Wired once per listing-detail render (a fresh #share-panel-container
+        // node every time, via the innerHTML assignment above) rather than
+        // inside createLandingPage()'s success path -- delegated listeners
+        // work fine against a container that's still empty here and gets its
+        // content filled in later. This avoids stacking a new listener each
+        // time the user successfully creates a landing page for this same
+        // listing (button re-enables in `finally` regardless of outcome, so
+        // repeat clicks on one listing are possible).
+        wireSharePanel(document.getElementById('share-panel-container'));
       } catch (err) {
         detail.innerHTML = `<div class="panel">Failed to reach the server: ${escapeHtml(err.message)}</div>`;
       }
@@ -678,6 +740,7 @@
             <a class="detail-url" href="${l.url}" target="_blank" rel="noopener noreferrer">View on Etsy →</a>
             <button id="create-landing-btn" class="landing-btn">✦ Create Landing Page</button>
           </div>
+          <div id="share-panel-container"></div>
 
           ${images ? `<div class="images">${images}</div>` : ''}
 
@@ -726,10 +789,98 @@
       `;
     }
 
+    function renderSharePanel(pageUrl, listing, copy) {
+      // No sharable copy (e.g. an unexpected response shape from the server)
+      // -- render nothing rather than let getSocialPost's `copy.socialPosts`
+      // access throw and break the "landing page created" success flow.
+      if (!copy) return '';
+
+      const { buildPinterestShareUrl, buildFacebookShareUrl, formatCaptionForCopy, getSocialPost } = window.shareLinks;
+      const imageUrl = listing?.images?.[0]?.url_fullxfull || listing?.images?.[0]?.url_570xN || '';
+
+      const platforms = [
+        { key: 'pinterest', label: 'Pinterest' },
+        { key: 'facebook', label: 'Facebook' },
+        { key: 'instagram', label: 'Instagram' },
+      ];
+
+      return `
+        <div class="share-panel">
+          ${platforms.map(({ key, label }) => {
+            const post = getSocialPost(copy, key);
+            const caption = formatCaptionForCopy(post);
+            let actionsHtml = `<button type="button" class="copy-caption-btn" data-platform="${key}">Copy caption</button>`;
+            let hint = '';
+            if (key === 'pinterest') {
+              const shareUrl = buildPinterestShareUrl({ pageUrl, imageUrl, socialPost: post });
+              actionsHtml += `<button type="button" class="platform-share-btn" data-url="${escapeHtml(shareUrl)}">Share to Pinterest</button>`;
+            } else if (key === 'facebook') {
+              const shareUrl = buildFacebookShareUrl({ pageUrl });
+              actionsHtml += `<button type="button" class="platform-share-btn" data-url="${escapeHtml(shareUrl)}">Share to Facebook</button>`;
+              hint = `<p class="share-hint">Facebook won't let us fill this in for you — click Share, then paste this caption into the post box that opens.</p>`;
+            } else {
+              if (imageUrl) {
+                actionsHtml += `<a class="platform-share-btn" href="${escapeHtml(imageUrl)}" target="_blank" rel="noopener noreferrer">Open image</a>`;
+              }
+              hint = `<p class="share-hint">Instagram doesn't support posting from a browser — copy the caption, save the image, then post from the Instagram app.</p>`;
+            }
+            return `
+              <div class="share-platform">
+                <h4>${label}</h4>
+                <textarea class="share-caption" data-platform="${key}">${escapeHtml(caption)}</textarea>
+                ${hint}
+                <div class="share-actions">${actionsHtml}</div>
+              </div>
+            `;
+          }).join('')}
+        </div>
+      `;
+    }
+
+    function wireSharePanel(container) {
+      container.addEventListener('click', async (e) => {
+        const copyCaptionBtn = e.target.closest('.copy-caption-btn');
+        if (copyCaptionBtn) {
+          const platform = copyCaptionBtn.dataset.platform;
+          const textarea = copyCaptionBtn.closest('.share-platform').querySelector(`textarea[data-platform="${platform}"]`);
+          const original = copyCaptionBtn.textContent;
+          try {
+            await navigator.clipboard.writeText(textarea.value);
+            copyCaptionBtn.textContent = 'Copied!';
+          } catch {
+            copyCaptionBtn.textContent = 'Copy failed';
+          }
+          setTimeout(() => { copyCaptionBtn.textContent = original; }, 1500);
+          return;
+        }
+
+        const platformShareBtn = e.target.closest('.platform-share-btn[data-url]');
+        if (platformShareBtn) {
+          const popup = window.open(platformShareBtn.dataset.url, '_blank', 'width=750,height=550');
+          if (!popup) {
+            alert('Please allow pop-ups for this site to open the share dialog.');
+          }
+        }
+      });
+    }
+
     async function createLandingPage() {
       if (!currentListing || !currentListingId) return;
       const btn = document.getElementById('create-landing-btn');
       const originalLabel = btn.textContent;
+      // Snapshot the listing/container this click belongs to, rather than
+      // re-reading the ambient currentListing/currentListingId globals or
+      // re-querying #share-panel-container by ID after the awaited fetch
+      // below. If the user switches to a different listing while this
+      // request is in flight, currentListing/Id get overwritten and a new
+      // #share-panel-container node is created for the new listing -- using
+      // fresh globals/lookups at response time would render this (old)
+      // listing's share data into the new listing's live panel. Writing into
+      // this snapshot instead is a no-op once the old container is detached,
+      // which is the correct outcome.
+      const listingForShare = currentListing;
+      const listingIdForRequest = currentListingId;
+      const shareContainer = document.getElementById('share-panel-container');
 
       const { data: allowance, error: allowanceError } = await window.supabaseClient.rpc(
         'create_landing_page_allowed',
@@ -761,7 +912,7 @@
         const res = await authedFetch('/api/landing-pages', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ listingId: currentListingId }),
+          body: JSON.stringify({ listingId: listingIdForRequest }),
         });
         const data = await res.json();
 
@@ -772,6 +923,16 @@
 
         newTab.location.href = data.url;
         window.refreshPagesRemaining();
+
+        try {
+          const absolutePageUrl = new URL(data.url, window.location.origin).href;
+          shareContainer.innerHTML = renderSharePanel(absolutePageUrl, listingForShare, data.copy);
+        } catch (shareErr) {
+          // The landing page itself was created successfully (the tab above
+          // already navigated to it) -- a share-panel rendering problem
+          // shouldn't be surfaced as a page-creation failure.
+          console.error('Failed to render share panel:', shareErr);
+        }
       } catch (err) {
         newTab.document.body.textContent = 'Failed to reach the server: ' + err.message;
       } finally {
@@ -796,7 +957,7 @@
     function escapeHtml(str) {
       const div = document.createElement('div');
       div.textContent = str ?? '';
-      return div.innerHTML;
+      return div.innerHTML.replace(/"/g, '&quot;').replace(/'/g, '&#39;');
     }
 
     function resetShopSearch() {
