@@ -72,3 +72,11 @@ test('getSocialPost falls back to a generic caption when the platform is missing
   assert.equal(result.caption, 'A Mug Worth Waking Up For — Thrown by hand.');
   assert.deepEqual(result.hashtags, []);
 });
+
+test('getSocialPost falls back to an empty caption (never the literal word "undefined") when headline/subheadline are also missing', () => {
+  const copy = { socialPosts: [] };
+  const result = getSocialPost(copy, 'pinterest');
+  assert.equal(result.platform, 'pinterest');
+  assert.equal(result.caption, '');
+  assert.deepEqual(result.hashtags, []);
+});

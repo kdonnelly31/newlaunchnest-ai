@@ -426,6 +426,11 @@ async function generateLandingCopy(listing, platforms) {
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 200 * 1024 * 1024 } });
 
 const app = express();
+// Trust the reverse proxy (Vercel) so req.protocol/req.secure/req.ip reflect
+// the original client request (e.g. X-Forwarded-Proto: https) instead of the
+// proxy's internal http connection. This keeps generated URLs (like og:url)
+// correct in production.
+app.set('trust proxy', true);
 app.use(express.json());
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 app.use(express.static(path.join(__dirname, 'public')));

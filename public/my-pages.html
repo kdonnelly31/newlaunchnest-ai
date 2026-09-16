@@ -142,6 +142,18 @@
     gap: .5rem;
     margin-top: .5rem;
   }
+  .share-actions button,
+  .share-actions a {
+    padding: .45rem .9rem;
+    border-radius: 6px;
+    font-size: .85rem;
+    text-decoration: none;
+    cursor: pointer;
+    border: 1px solid var(--border);
+    background: white;
+    color: var(--ink);
+    font-family: inherit;
+  }
 </style>
 </head>
 <body>
@@ -166,7 +178,7 @@
     function escapeHtml(str) {
       const div = document.createElement('div');
       div.textContent = str ?? '';
-      return div.innerHTML;
+      return div.innerHTML.replace(/"/g, '&quot;').replace(/'/g, '&#39;');
     }
 
     function renderSharePanel(row) {

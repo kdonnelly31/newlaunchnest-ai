@@ -35,5 +35,10 @@ export function buildFacebookShareUrl({ pageUrl }) {
 export function getSocialPost(copy, platform) {
   const existing = (copy.socialPosts || []).find(p => p.platform === platform);
   if (existing) return existing;
-  return { platform, title: null, caption: `${copy.headline} — ${copy.subheadline}`, hashtags: [] };
+  // Only build the "headline — subheadline" fallback caption when both
+  // pieces are actually present -- otherwise fall back to an empty string
+  // rather than let a malformed legacy row render the literal text
+  // "undefined — undefined" in a caption textarea.
+  const caption = (copy.headline && copy.subheadline) ? `${copy.headline} — ${copy.subheadline}` : '';
+  return { platform, title: null, caption, hashtags: [] };
 }
