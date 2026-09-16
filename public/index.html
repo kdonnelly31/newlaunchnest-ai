@@ -659,6 +659,15 @@
         currentListingId = listingId;
         detail.innerHTML = renderListingDetail(listing);
         document.getElementById('create-landing-btn').addEventListener('click', createLandingPage);
+        // Wired once per listing-detail render (a fresh #share-panel-container
+        // node every time, via the innerHTML assignment above) rather than
+        // inside createLandingPage()'s success path -- delegated listeners
+        // work fine against a container that's still empty here and gets its
+        // content filled in later. This avoids stacking a new listener each
+        // time the user successfully creates a landing page for this same
+        // listing (button re-enables in `finally` regardless of outcome, so
+        // repeat clicks on one listing are possible).
+        wireSharePanel(document.getElementById('share-panel-container'));
       } catch (err) {
         detail.innerHTML = `<div class="panel">Failed to reach the server: ${escapeHtml(err.message)}</div>`;
       }
@@ -859,6 +868,19 @@
       if (!currentListing || !currentListingId) return;
       const btn = document.getElementById('create-landing-btn');
       const originalLabel = btn.textContent;
+      // Snapshot the listing/container this click belongs to, rather than
+      // re-reading the ambient currentListing/currentListingId globals or
+      // re-querying #share-panel-container by ID after the awaited fetch
+      // below. If the user switches to a different listing while this
+      // request is in flight, currentListing/Id get overwritten and a new
+      // #share-panel-container node is created for the new listing -- using
+      // fresh globals/lookups at response time would render this (old)
+      // listing's share data into the new listing's live panel. Writing into
+      // this snapshot instead is a no-op once the old container is detached,
+      // which is the correct outcome.
+      const listingForShare = currentListing;
+      const listingIdForRequest = currentListingId;
+      const shareContainer = document.getElementById('share-panel-container');
 
       const { data: allowance, error: allowanceError } = await window.supabaseClient.rpc(
         'create_landing_page_allowed',
@@ -890,7 +912,7 @@
         const res = await authedFetch('/api/landing-pages', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ listingId: currentListingId }),
+          body: JSON.stringify({ listingId: listingIdForRequest }),
         });
         const data = await res.json();
 
@@ -903,10 +925,8 @@
         window.refreshPagesRemaining();
 
         try {
-          const shareContainer = document.getElementById('share-panel-container');
           const absolutePageUrl = new URL(data.url, window.location.origin).href;
-          shareContainer.innerHTML = renderSharePanel(absolutePageUrl, currentListing, data.copy);
-          wireSharePanel(shareContainer);
+          shareContainer.innerHTML = renderSharePanel(absolutePageUrl, listingForShare, data.copy);
         } catch (shareErr) {
           // The landing page itself was created successfully (the tab above
           // already navigated to it) -- a share-panel rendering problem
