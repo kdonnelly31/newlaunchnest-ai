@@ -50,6 +50,7 @@
   }
   .page-card {
     display: flex;
+    flex-wrap: wrap;
     gap: 1rem;
     align-items: center;
     background: var(--card-bg);
@@ -105,6 +106,39 @@
   .page-card.unavailable .info h3 {
     color: var(--muted);
   }
+  .share-panel {
+    flex: 1 1 100%;
+    margin-top: .75rem;
+    padding-top: .75rem;
+    border-top: 1px solid var(--border);
+    display: grid;
+    gap: 1rem;
+  }
+  .share-platform h4 {
+    margin: 0 0 .4rem;
+    font-size: .85rem;
+  }
+  .share-caption {
+    width: 100%;
+    min-height: 4.5rem;
+    padding: .5rem .6rem;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    font-family: inherit;
+    font-size: .85rem;
+    resize: vertical;
+    box-sizing: border-box;
+  }
+  .share-hint {
+    margin: .4rem 0 0;
+    font-size: .78rem;
+    color: var(--muted);
+  }
+  .share-actions {
+    display: flex;
+    gap: .5rem;
+    margin-top: .5rem;
+  }
 </style>
 </head>
 <body>
@@ -121,6 +155,7 @@
 
   <script type="module">
     import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
+    import { buildPinterestShareUrl, buildFacebookShareUrl, formatCaptionForCopy, getSocialPost } from './shareLinks.js';
 
     const status = document.getElementById('status');
     const grid = document.getElementById('pages-grid');
@@ -129,6 +164,50 @@
       const div = document.createElement('div');
       div.textContent = str ?? '';
       return div.innerHTML;
+    }
+
+    function renderSharePanel(row) {
+      const { listing, copy } = row.content;
+      const pageUrl = new URL(`/p/${row.id}`, window.location.origin).href;
+      const imageUrl = listing?.images?.[0]?.url_fullxfull || listing?.images?.[0]?.url_570xN || '';
+
+      const platforms = [
+        { key: 'pinterest', label: 'Pinterest' },
+        { key: 'facebook', label: 'Facebook' },
+        { key: 'instagram', label: 'Instagram' },
+      ];
+
+      return `
+        <div class="share-panel" hidden>
+          ${platforms.map(({ key, label }) => {
+            const post = getSocialPost(copy, key);
+            const caption = formatCaptionForCopy(post);
+            let actionsHtml = `<button type="button" class="copy-caption-btn" data-platform="${key}">Copy caption</button>`;
+            let hint = '';
+            if (key === 'pinterest') {
+              const shareUrl = buildPinterestShareUrl({ pageUrl, imageUrl, socialPost: post });
+              actionsHtml += `<button type="button" class="platform-share-btn" data-url="${escapeHtml(shareUrl)}">Share to Pinterest</button>`;
+            } else if (key === 'facebook') {
+              const shareUrl = buildFacebookShareUrl({ pageUrl });
+              actionsHtml += `<button type="button" class="platform-share-btn" data-url="${escapeHtml(shareUrl)}">Share to Facebook</button>`;
+              hint = `<p class="share-hint">Facebook won't let us fill this in for you — click Share, then paste this caption into the post box that opens.</p>`;
+            } else {
+              if (imageUrl) {
+                actionsHtml += `<a class="platform-share-btn" href="${escapeHtml(imageUrl)}" target="_blank" rel="noopener noreferrer">Open image</a>`;
+              }
+              hint = `<p class="share-hint">Instagram doesn't support posting from a browser — copy the caption, save the image, then post from the Instagram app.</p>`;
+            }
+            return `
+              <div class="share-platform">
+                <h4>${label}</h4>
+                <textarea class="share-caption" data-platform="${key}">${escapeHtml(caption)}</textarea>
+                ${hint}
+                <div class="share-actions">${actionsHtml}</div>
+              </div>
+            `;
+          }).join('')}
+        </div>
+      `;
     }
 
     function renderCard(row) {
@@ -161,8 +240,10 @@
           </div>
           <div class="actions">
             <button type="button" class="copy-btn" data-url="${escapeHtml(url)}">Copy link</button>
+            <button type="button" class="share-toggle-btn">Share</button>
             <a class="primary" href="${escapeHtml(url)}" target="_blank" rel="noopener noreferrer">View page →</a>
           </div>
+          ${renderSharePanel(row)}
         </div>
       `;
     }
@@ -224,16 +305,48 @@
       grid.innerHTML = rows.map(renderCard).join('');
 
       grid.addEventListener('click', async (e) => {
-        const btn = e.target.closest('.copy-btn');
-        if (!btn) return;
-        const original = btn.textContent;
-        try {
-          await navigator.clipboard.writeText(new URL(btn.dataset.url, window.location.origin).href);
-          btn.textContent = 'Copied!';
-        } catch {
-          btn.textContent = 'Copy failed';
+        const copyLinkBtn = e.target.closest('.copy-btn');
+        if (copyLinkBtn) {
+          const original = copyLinkBtn.textContent;
+          try {
+            await navigator.clipboard.writeText(new URL(copyLinkBtn.dataset.url, window.location.origin).href);
+            copyLinkBtn.textContent = 'Copied!';
+          } catch {
+            copyLinkBtn.textContent = 'Copy failed';
+          }
+          setTimeout(() => { copyLinkBtn.textContent = original; }, 1500);
+          return;
         }
-        setTimeout(() => { btn.textContent = original; }, 1500);
+
+        const shareToggleBtn = e.target.closest('.share-toggle-btn');
+        if (shareToggleBtn) {
+          const panel = shareToggleBtn.closest('.page-card').querySelector('.share-panel');
+          panel.hidden = !panel.hidden;
+          return;
+        }
+
+        const copyCaptionBtn = e.target.closest('.copy-caption-btn');
+        if (copyCaptionBtn) {
+          const platform = copyCaptionBtn.dataset.platform;
+          const textarea = copyCaptionBtn.closest('.share-platform').querySelector(`textarea[data-platform="${platform}"]`);
+          const original = copyCaptionBtn.textContent;
+          try {
+            await navigator.clipboard.writeText(textarea.value);
+            copyCaptionBtn.textContent = 'Copied!';
+          } catch {
+            copyCaptionBtn.textContent = 'Copy failed';
+          }
+          setTimeout(() => { copyCaptionBtn.textContent = original; }, 1500);
+          return;
+        }
+
+        const platformShareBtn = e.target.closest('.platform-share-btn[data-url]');
+        if (platformShareBtn) {
+          const popup = window.open(platformShareBtn.dataset.url, '_blank', 'width=750,height=550');
+          if (!popup) {
+            alert('Please allow pop-ups for this site to open the share dialog.');
+          }
+        }
       });
     }
 
