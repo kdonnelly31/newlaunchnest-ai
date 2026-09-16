@@ -114,6 +114,9 @@
     display: grid;
     gap: 1rem;
   }
+  .share-panel[hidden] {
+    display: none;
+  }
   .share-platform h4 {
     margin: 0 0 .4rem;
     font-size: .85rem;
@@ -168,7 +171,13 @@
 
     function renderSharePanel(row) {
       const { listing, copy } = row.content;
+      // No sharable copy (e.g. a row saved before captions existed) -- render
+      // nothing rather than let getSocialPost's `copy.socialPosts` access throw
+      // on a null/undefined `copy` and break rendering of every card.
+      if (!copy) return '';
       const pageUrl = new URL(`/p/${row.id}`, window.location.origin).href;
+      // Prefer the full-resolution image for sharing (vs. renderCard's 570xN
+      // thumbnail below) since social platforms display it much larger.
       const imageUrl = listing?.images?.[0]?.url_fullxfull || listing?.images?.[0]?.url_570xN || '';
 
       const platforms = [
@@ -240,10 +249,10 @@
           </div>
           <div class="actions">
             <button type="button" class="copy-btn" data-url="${escapeHtml(url)}">Copy link</button>
-            <button type="button" class="share-toggle-btn">Share</button>
+            ${copy ? '<button type="button" class="share-toggle-btn">Share</button>' : ''}
             <a class="primary" href="${escapeHtml(url)}" target="_blank" rel="noopener noreferrer">View page →</a>
           </div>
-          ${renderSharePanel(row)}
+          ${copy ? renderSharePanel(row) : ''}
         </div>
       `;
     }
@@ -346,6 +355,7 @@
           if (!popup) {
             alert('Please allow pop-ups for this site to open the share dialog.');
           }
+          return;
         }
       });
     }
