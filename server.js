@@ -1003,7 +1003,10 @@ app.get('/p/:id', async (req, res) => {
       return res.status(404).send(renderNotFoundPage());
     }
 
-    res.set('Content-Type', 'text/html').send(renderLandingPageDocument(row.content));
+    res.set('Content-Type', 'text/html').send(renderLandingPageDocument({
+      ...row.content,
+      pageUrl: `${req.protocol}://${req.get('host')}/p/${req.params.id}`,
+    }));
   } catch (err) {
     // A malformed content snapshot can make rendering throw. This route is
     // public and unauthenticated, and an uncaught async throw here would take
