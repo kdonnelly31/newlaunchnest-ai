@@ -360,10 +360,9 @@ function formatListing(listing, imagesByListingId) {
   };
 }
 
-const SOCIAL_PLATFORMS = ['tiktok', 'facebook', 'instagram', 'pinterest'];
+const SOCIAL_PLATFORMS = ['instagram', 'facebook', 'pinterest'];
 
 const PLATFORM_GUIDANCE = {
-  tiktok: 'TikTok: a short, punchy, hook-first caption (1-2 sentences) in a casual, trend-aware voice. 5-8 relevant hashtags. No title.',
   facebook: 'Facebook: a warm, conversational caption (2-4 sentences), like a small-shop owner talking to regulars. 0-3 hashtags at most. No title.',
   instagram: 'Instagram: an inviting caption (roughly 60-120 words) with a bit of storytelling, ending on a soft call-to-action. 8-12 relevant hashtags. No title.',
   pinterest: 'Pinterest: a keyword-rich, benefit-led title (under 100 characters) plus a descriptive caption (2-3 sentences) written to surface in search. 3-6 hashtags.',
@@ -887,14 +886,10 @@ app.post('/api/landing-pages', requireApproved, async (req, res) => {
     return res.status(503).json({ error: 'Landing pages are not configured on the server.' });
   }
 
-  const { listingId, platforms } = req.body ?? {};
+  const { listingId } = req.body ?? {};
   if (!listingId) {
     return res.status(400).json({ error: 'Missing listingId.' });
   }
-  const resolvedPlatforms = Array.isArray(platforms)
-    ? [...new Set(platforms.filter(p => SOCIAL_PLATFORMS.includes(p)))]
-    : [];
-  if (resolvedPlatforms.length === 0) resolvedPlatforms.push('instagram');
 
   // Safe under the service-role client even though create_landing_page_allowed
   // guards with `if p_user_id <> auth.uid() then raise`: with no JWT, auth.uid()
@@ -933,7 +928,7 @@ app.post('/api/landing-pages', requireApproved, async (req, res) => {
         materials: listing.materials,
         shopName: listing.shop?.shop_name,
       },
-      resolvedPlatforms,
+      SOCIAL_PLATFORMS,
     );
 
     const price = listing.price
@@ -974,7 +969,7 @@ app.post('/api/landing-pages', requireApproved, async (req, res) => {
       return res.status(500).json({ error: insertError.message });
     }
 
-    res.json({ id: row.id, url: `/p/${row.id}` });
+    res.json({ id: row.id, url: `/p/${row.id}`, copy });
   } catch (err) {
     console.error(err);
     if (err instanceof Anthropic.AuthenticationError) {
