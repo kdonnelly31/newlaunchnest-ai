@@ -145,7 +145,7 @@
         <td>${profile.company_name ?? ''}</td>
         <td>${roleSelect}</td>
         <td><span class="badge ${STATUS_BADGE[profile.status] ?? ''}">${profile.status}</span></td>
-        <td>${profile.page_allowance}</td>
+        <td>${profile.pages_used} / ${profile.page_allowance} (${Math.max(profile.page_allowance - profile.pages_used, 0)} left)</td>
         <td>
           <input class="etsy-shop-input" type="text" placeholder="e.g. YarnCraftCo" value="${profile.etsy_shop_name ?? ''}" style="width:9rem; padding:.35rem; border:1px solid var(--border); border-radius:6px; font-size:.85rem;" />
           <button class="btn-save-shop">Save</button>

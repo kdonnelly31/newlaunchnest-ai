@@ -445,6 +445,19 @@ app.get('/api/config', (req, res) => {
   res.json({ supabaseUrl: SUPABASE_URL, supabaseAnonKey: SUPABASE_ANON_KEY });
 });
 
+// landing_pages.user_id references auth.users directly (not public.profiles),
+// so PostgREST can't embed a count via the usual `profiles.select('landing_pages(count)')`
+// join syntax -- tally per-user counts here instead.
+async function getPagesUsedByUser() {
+  const { data, error } = await supabaseAdmin.from('landing_pages').select('user_id');
+  if (error) throw new Error(error.message);
+  const usedByUser = {};
+  for (const row of data) {
+    usedByUser[row.user_id] = (usedByUser[row.user_id] || 0) + 1;
+  }
+  return usedByUser;
+}
+
 app.get('/api/admin/profiles', requireAdmin, async (req, res) => {
   const { data, error } = await supabaseAdmin
     .from('profiles')
@@ -454,7 +467,15 @@ app.get('/api/admin/profiles', requireAdmin, async (req, res) => {
     console.error(error);
     return res.status(500).json({ error: error.message });
   }
-  res.json({ profiles: data });
+
+  try {
+    const usedByUser = await getPagesUsedByUser();
+    const profiles = data.map(p => ({ ...p, pages_used: usedByUser[p.id] || 0 }));
+    res.json({ profiles });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: err.message });
+  }
 });
 
 const ROLES = ['admin', 'user'];
@@ -488,7 +509,17 @@ app.patch('/api/admin/profiles/:id', requireAdmin, async (req, res) => {
     console.error(error);
     return res.status(500).json({ error: error.message });
   }
-  res.json({ profile: data });
+
+  const { count: pagesUsed, error: countError } = await supabaseAdmin
+    .from('landing_pages')
+    .select('id', { count: 'exact', head: true })
+    .eq('user_id', data.id);
+  if (countError) {
+    console.error(countError);
+    return res.status(500).json({ error: countError.message });
+  }
+
+  res.json({ profile: { ...data, pages_used: pagesUsed ?? 0 } });
 });
 
 // Called when a buyer repurchases the Starter tier -- adds to (never resets)
@@ -526,7 +557,16 @@ app.post('/api/admin/profiles/:id/grant-pages', requireAdmin, async (req, res) =
     return res.status(500).json({ error: profileError.message });
   }
 
-  res.json({ profile, page_allowance: newAllowance });
+  const { count: pagesUsed, error: countError } = await supabaseAdmin
+    .from('landing_pages')
+    .select('id', { count: 'exact', head: true })
+    .eq('user_id', profile.id);
+  if (countError) {
+    console.error(countError);
+    return res.status(500).json({ error: countError.message });
+  }
+
+  res.json({ profile: { ...profile, pages_used: pagesUsed ?? 0 }, page_allowance: newAllowance });
 });
 
 app.get('/api/pinterest/boards', requireApproved, async (req, res) => {
