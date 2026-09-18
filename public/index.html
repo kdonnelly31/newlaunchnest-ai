@@ -426,7 +426,7 @@
                 : 'Enter your Etsy order number to verify your purchase and get instant access.'}</p>
               ${isDeclined ? '' : `
               <form id="verify-purchase-form">
-                <input id="receipt-id-input" type="text" inputmode="numeric" placeholder="e.g. 1234567890"
+                <input id="receipt-id-input" type="text" inputmode="numeric" placeholder="e.g. 1234567890" autocomplete="off"
                        style="width:100%; padding:.65rem .8rem; margin-bottom:.75rem; border:1px solid #eee2d6; border-radius:8px; font-size:1rem; box-sizing:border-box;" required />
                 <button id="verify-purchase-submit" type="submit"
                         style="width:100%; padding:.75rem; border:none; border-radius:8px; background:#d5641c; color:white; font-size:1rem; cursor:pointer;">
@@ -451,9 +451,18 @@
             submitBtn.disabled = true;
             messageEl.textContent = '';
             try {
+              // Re-fetch the session instead of reusing the one captured at page load --
+              // that token may have expired if the buyer took a while to find their
+              // order number, and supabase-js keeps a refreshed one ready in storage.
+              const { data: { session: freshSession } } = await supabase.auth.getSession();
+              if (!freshSession) {
+                messageEl.textContent = 'Your session expired — please log in again.';
+                submitBtn.disabled = false;
+                return;
+              }
               const verifyRes = await fetch('/api/verify-purchase', {
                 method: 'POST',
-                headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${session.access_token}` },
+                headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${freshSession.access_token}` },
                 body: JSON.stringify({ receiptId }),
               });
               const verifyData = await verifyRes.json();
