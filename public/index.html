@@ -257,7 +257,7 @@
 
   <header>
     <h1>Find My Shop</h1>
-    <p>Your Etsy shop is already on file — we'll display your active listings automatically, so you can select the product you want to promote, create a landing page for it, and share it straight to social media from this site.</p>
+    <p>Select an active listing to create a landing page.</p>
   </header>
 
   <script type="module">
@@ -314,8 +314,8 @@
                         font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;">
               <h1 style="margin-bottom:.5rem;">${isDeclined ? 'Account access declined' : 'Almost there'}</h1>
               <p style="color:#6b6b6b;">${isDeclined
-                ? 'Your account access was declined. Contact support if you believe this is a mistake.'
-                : 'Enter your Etsy order number to verify your purchase and get instant access.'}</p>
+                ? 'Access declined. Contact support if this is a mistake.'
+                : 'Enter your Etsy order number to verify your purchase.'}</p>
               ${isDeclined ? '' : `
               <form id="verify-purchase-form">
                 <input id="receipt-id-input" type="text" inputmode="numeric" placeholder="e.g. 1234567890" autocomplete="off"
@@ -362,10 +362,10 @@
                 if (verifyRes.status === 404) {
                   messageEl.innerHTML = `
                     <div style="text-align:left; color:#6b6b6b;">
-                      <p style="font-weight:600; color:#222; margin:0 0 .4rem;">Hmm, We Couldn't Find Your Order</p>
-                      <p style="margin:0 0 .75rem;">This order number doesn't match a LaunchNestAI purchase. Please double-check the order number from your Etsy purchase confirmation.</p>
-                      <p style="margin:0 0 .75rem;">Haven't purchased yet? <a href="https://www.etsy.com/listing/4569723339/ai-landing-page-marketing-template-pdf" target="_blank" rel="noopener noreferrer" style="color:#d5641c;">Grab your copy on Etsy</a> to get started.</p>
-                      <p style="margin:0;">Still stuck? Reach out through <a href="https://www.etsy.com/shop/LaunchNestAI" target="_blank" rel="noopener noreferrer" style="color:#d5641c;">Etsy Messages</a> — we're happy to help.</p>
+                      <p style="font-weight:600; color:#222; margin:0 0 .4rem;">Order Not Found</p>
+                      <p style="margin:0 0 .75rem;">This order number doesn't match a LaunchNestAI purchase. Double-check it against your Etsy confirmation.</p>
+                      <p style="margin:0 0 .75rem;">Haven't purchased yet? <a href="https://www.etsy.com/listing/4569723339/ai-landing-page-marketing-template-pdf" target="_blank" rel="noopener noreferrer" style="color:#d5641c;">Get it on Etsy</a>.</p>
+                      <p style="margin:0;">Still stuck? Contact us via <a href="https://www.etsy.com/shop/LaunchNestAI" target="_blank" rel="noopener noreferrer" style="color:#d5641c;">Etsy Messages</a>.</p>
                     </div>`;
                 } else {
                   messageEl.textContent = verifyData.error || 'Something went wrong. Please try again.';
@@ -480,7 +480,7 @@
           // search getting the same 404 is just a live typo, so it keeps the
           // plain message instead.
           if (res.status === 404 && window.shopSearchRestricted) {
-            status.innerHTML = `We couldn't find an Etsy shop matching the name on your account ("${escapeHtml(shopName)}"). This is usually a typo made at checkout — <a href="https://www.etsy.com/shop/LaunchNestAI" target="_blank" rel="noopener noreferrer" style="color:var(--accent);">reach out through Etsy Messages</a> so we can fix it.`;
+            status.innerHTML = `We couldn't find an Etsy shop matching the name on your account ("${escapeHtml(shopName)}"). Contact us via <a href="https://www.etsy.com/shop/LaunchNestAI" target="_blank" rel="noopener noreferrer" style="color:var(--accent);">Etsy Messages</a> to fix it.`;
           } else {
             status.textContent = data.error || 'Something went wrong.';
           }
@@ -491,7 +491,7 @@
         // separate /listings/active search index hasn't caught up yet -- when
         // that happens, say so instead of implying the shop has no listings.
         if (data.listings.length === 0 && data.shop.etsyReportedActiveCount > 0) {
-          status.textContent = "Etsy shows you have an active listing, but it hasn't appeared in their search results yet — this is a known delay on Etsy's side. Try again in a few minutes.";
+          status.textContent = "Your listing hasn't appeared in Etsy's search index yet. Try again in a few minutes.";
         } else {
           status.textContent = `${data.listings.length} active listing(s) found.`;
         }
@@ -605,7 +605,7 @@
         return;
       }
       if (!allowance?.[0]?.allowed) {
-        status.textContent = "You've reached your page limit — purchase again to unlock 3 more pages.";
+        status.textContent = "Page limit reached — purchase again for 3 more.";
         return;
       }
 
