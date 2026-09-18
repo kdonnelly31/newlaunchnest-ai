@@ -295,61 +295,6 @@
     border-radius: 8px;
     padding: .8rem;
   }
-  #detail section {
-    margin-top: 1.4rem;
-  }
-  #detail section h3 {
-    margin: 0 0 .6rem;
-    font-size: 1rem;
-    color: var(--accent);
-    border-bottom: 1px solid var(--border);
-    padding-bottom: .3rem;
-  }
-  .kv-grid {
-    display: grid;
-    grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
-    gap: .5rem 1.2rem;
-  }
-  .kv-grid .kv {
-    font-size: .85rem;
-    line-height: 1.4;
-  }
-  .kv-grid .kv .k {
-    display: block;
-    color: var(--muted);
-    font-size: .72rem;
-    text-transform: uppercase;
-    letter-spacing: .03em;
-  }
-  .tag-list {
-    display: flex;
-    flex-wrap: wrap;
-    gap: .4rem;
-  }
-  .tag-list span {
-    background: #f5efe6;
-    border: 1px solid var(--border);
-    border-radius: 999px;
-    padding: .2rem .7rem;
-    font-size: .78rem;
-  }
-  #detail details {
-    margin-top: 1.4rem;
-  }
-  #detail summary {
-    cursor: pointer;
-    color: var(--accent);
-    font-size: .9rem;
-  }
-  #detail pre {
-    background: #1e1e1e;
-    color: #e6e6e6;
-    padding: 1rem;
-    border-radius: 8px;
-    overflow-x: auto;
-    font-size: .78rem;
-    margin-top: .6rem;
-  }
 </style>
 </head>
 <body>
@@ -683,64 +628,9 @@
     }
 
     function renderListingDetail(l) {
-      const price = l.price ? (Number(l.price.amount) / Number(l.price.divisor)).toFixed(2) : null;
       const images = (l.images || []).map(img => `
         <img src="${img.url_570xN || img.url_fullxfull || ''}" alt="" loading="lazy" />
       `).join('');
-
-      const overview = kvGrid([
-        ['Price', price ? `$${price} ${l.price.currency_code}` : '—'],
-        ['Quantity available', l.quantity],
-        ['Views', l.views],
-        ['Favorers', l.num_favorers],
-        ['State', l.state],
-        ['Listing type', l.listing_type],
-        ['Who made it', l.who_made],
-        ['When made', l.when_made],
-        ['Is supply', l.is_supply],
-        ['Customizable', l.is_customizable],
-        ['Personalizable', l.is_personalizable],
-        ['Taxable', l.is_taxable],
-        ['Taxonomy ID', l.taxonomy_id],
-        ['Created', formatDate(l.original_creation_timestamp)],
-        ['Last modified', formatDate(l.last_modified_timestamp)],
-        ['Listing expires', formatDate(l.ending_timestamp)],
-      ]);
-
-      const shipping = kvGrid([
-        ['Processing time', l.processing_min != null ? `${l.processing_min}–${l.processing_max} business days` : '—'],
-        ['Shipping profile ID', l.shipping_profile_id ?? '—'],
-        ['Return policy ID', l.return_policy_id ?? '—'],
-        ['Item weight', l.item_weight ? `${l.item_weight} ${l.item_weight_unit || ''}` : '—'],
-        ['Dimensions', (l.item_length || l.item_width || l.item_height)
-          ? `${l.item_length ?? '?'} x ${l.item_width ?? '?'} x ${l.item_height ?? '?'} ${l.item_dimensions_unit || ''}`
-          : '—'],
-      ]);
-
-      const shopSection = l.shop ? kvGrid([
-        ['Shop name', escapeHtml(l.shop.shop_name)],
-        ['Shop title', escapeHtml(l.shop.title)],
-        ['Shop URL', l.shop.url ? `<a href="${l.shop.url}" target="_blank" rel="noopener noreferrer">${escapeHtml(l.shop.url)}</a>` : '—'],
-        ['On vacation', l.shop.is_vacation],
-        ['Review average', l.shop.review_average ?? '—'],
-        ['Review count', l.shop.review_count ?? '—'],
-        ['Active listings', l.shop.listing_active_count ?? '—'],
-        ['Sales', l.shop.transaction_sold_count ?? '—'],
-        ['Shop location', escapeHtml(l.shop.shop_location_country_iso) || '—'],
-        ['Currency', escapeHtml(l.shop.currency_code) || '—'],
-      ]) : '<p>Not available.</p>';
-
-      const userSection = l.user ? kvGrid([
-        ['User ID', l.user.user_id],
-        ['Login name', escapeHtml(l.user.login_name) || '—'],
-      ]) : '<p>Not available.</p>';
-
-      const tagList = (l.tags || []).map(t => `<span>${escapeHtml(t)}</span>`).join('') || '<p>None</p>';
-      const materialList = (l.materials || []).map(t => `<span>${escapeHtml(t)}</span>`).join('') || '<p>None</p>';
-
-      const videosSection = (l.videos && l.videos.length)
-        ? l.videos.map(v => `<p><a href="${v.video_url}" target="_blank" rel="noopener noreferrer">Video ${v.video_id}</a></p>`).join('')
-        : '<p>None</p>';
 
       return `
         <div class="panel">
@@ -754,46 +644,6 @@
           ${images ? `<div class="images">${images}</div>` : ''}
 
           <div class="description">${escapeHtml(l.description || 'No description.')}</div>
-
-          <section>
-            <h3>Overview</h3>
-            ${overview}
-          </section>
-
-          <section>
-            <h3>Shipping &amp; Policies</h3>
-            ${shipping}
-          </section>
-
-          <section>
-            <h3>Tags</h3>
-            <div class="tag-list">${tagList}</div>
-          </section>
-
-          <section>
-            <h3>Materials</h3>
-            <div class="tag-list">${materialList}</div>
-          </section>
-
-          <section>
-            <h3>Shop</h3>
-            ${shopSection}
-          </section>
-
-          <section>
-            <h3>Seller (User)</h3>
-            ${userSection}
-          </section>
-
-          <section>
-            <h3>Videos</h3>
-            ${videosSection}
-          </section>
-
-          <details>
-            <summary>Show raw Etsy API data</summary>
-            <pre>${escapeHtml(JSON.stringify(l, null, 2))}</pre>
-          </details>
         </div>
       `;
     }
@@ -948,19 +798,6 @@
         btn.disabled = false;
         btn.textContent = originalLabel;
       }
-    }
-
-    function kvGrid(pairs) {
-      return `<div class="kv-grid">${pairs.map(([k, v]) => `
-        <div class="kv"><span class="k">${escapeHtml(k)}</span>${v ?? '—'}</div>
-      `).join('')}</div>`;
-    }
-
-    function formatDate(unixSeconds) {
-      if (!unixSeconds) return '—';
-      return new Date(unixSeconds * 1000).toLocaleDateString(undefined, {
-        year: 'numeric', month: 'short', day: 'numeric',
-      });
     }
 
     function escapeHtml(str) {
