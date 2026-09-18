@@ -251,7 +251,7 @@
 </head>
 <body>
   <span id="pages-remaining" style="display:none; position:fixed; top:1rem; right:15rem; font-size:.85rem; color:var(--muted);"></span>
-  <a id="my-pages-link" href="/my-pages.html" style="display:none; position:fixed; top:1rem; right:9rem; font-size:.85rem; color:var(--muted); text-decoration:none;">My Pages</a>
+  <a id="my-pages-link" href="/my-pages.html" style="display:none; position:fixed; top:1rem; right:9rem; font-size:.85rem; color:var(--muted); text-decoration:none;">My Landing Pages</a>
   <a id="admin-link" href="/admin.html" style="display:none; position:fixed; top:1rem; right:5rem; font-size:.85rem; color:var(--muted); text-decoration:none;">Admin</a>
   <a id="logout-link" href="#" style="display:none; position:fixed; top:1rem; right:1.25rem; font-size:.85rem; color:var(--muted); text-decoration:none;">Log out</a>
 
@@ -409,7 +409,9 @@
             const pagesRemainingEl = document.getElementById('pages-remaining');
             if (error || !data?.[0]) return;
             const { remaining } = data[0];
-            pagesRemainingEl.textContent = remaining === null ? 'Unlimited pages' : `${remaining} page(s) left`;
+            pagesRemainingEl.textContent = remaining === null
+              ? 'Unlimited Landing Pages'
+              : `${remaining} Landing Page${remaining === 1 ? '' : 's'} (left)`;
             pagesRemainingEl.style.display = 'block';
           };
           window.refreshPagesRemaining();
