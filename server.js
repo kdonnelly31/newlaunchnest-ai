@@ -791,7 +791,7 @@ app.post('/api/verify-purchase', requireAuth, async (req, res) => {
     return res.status(400).json({ error: 'Enter a valid Etsy order number.' });
   }
 
-  if (req.profile.role === 'admin' || req.profile.status === 'approved') {
+  if (req.profile.role === 'admin') {
     return res.json({ approved: true });
   }
 
@@ -803,14 +803,24 @@ app.post('/api/verify-purchase', requireAuth, async (req, res) => {
     return res.status(503).json({ error: 'Purchase verification is temporarily unavailable — contact support.' });
   }
 
+  // An already-approved account submitting an order number is buying more
+  // pages, not activating for the first time -- verified the same way, but
+  // grants +3 pages instead of flipping status, and never re-approves.
+  const isRepurchase = req.profile.status === 'approved';
+
   try {
     const { data: existingClaim, error: claimError } = await supabaseAdmin
-      .from('profiles')
-      .select('id')
-      .eq('etsy_receipt_id', receiptId)
-      .neq('id', req.user.id)
+      .from('claimed_etsy_receipts')
+      .select('user_id')
+      .eq('receipt_id', receiptId)
       .maybeSingle();
     if (claimError) throw new Error(claimError.message);
+
+    if (existingClaim?.user_id === req.user.id) {
+      // Already claimed by this same account (e.g. a retried submission
+      // after a network hiccup) -- nothing new to verify or grant.
+      return res.json({ approved: true });
+    }
 
     let receipt = null;
     if (!existingClaim) {
@@ -840,10 +850,22 @@ app.post('/api/verify-purchase', requireAuth, async (req, res) => {
       return res.status(result.status).json({ error: result.message });
     }
 
-    const { error: approveError } = await supabaseAdmin
+    // Recorded before updating the profile so a crash partway through can't
+    // leave this receipt usable a second time.
+    const { error: claimInsertError } = await supabaseAdmin
+      .from('claimed_etsy_receipts')
+      .insert({ receipt_id: receiptId, user_id: req.user.id });
+    if (claimInsertError) {
+      if (claimInsertError.code === '23505') {
+        return res.status(409).json({ error: 'This order number has already been used to activate another account.' });
+      }
+      throw new Error(claimInsertError.message);
+    }
+
+    const { error: updateError } = await supabaseAdmin
       .from('profiles')
       .update({
-        status: 'approved',
+        ...(isRepurchase ? {} : { status: 'approved' }),
         etsy_receipt_id: receiptId,
         purchase_verified_at: new Date().toISOString(),
         // Falls back to the existing manual admin field when the buyer's
@@ -852,11 +874,12 @@ app.post('/api/verify-purchase', requireAuth, async (req, res) => {
         ...(result.shopName ? { etsy_shop_name: result.shopName } : {}),
       })
       .eq('id', req.user.id);
-    if (approveError) {
-      if (approveError.code === '23505') {
-        return res.status(409).json({ error: 'This order number has already been used to activate another account.' });
-      }
-      throw new Error(approveError.message);
+    if (updateError) throw new Error(updateError.message);
+
+    if (isRepurchase) {
+      const { error: grantError } = await supabaseAdmin
+        .rpc('grant_additional_pages', { p_email: req.profile.email, p_amount: 3 });
+      if (grantError) throw new Error(grantError.message);
     }
 
     res.json({ approved: true });

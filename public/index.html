@@ -307,16 +307,13 @@
           document.getElementById('admin-link').style.display = 'block';
         }
 
-        if (profile?.role !== 'admin' && profile?.status !== 'approved') {
-          const isDeclined = profile?.status === 'declined';
+        function renderPurchaseScreen({ heading, message, showForm }) {
           document.body.innerHTML = `
             <div style="max-width:420px; margin:4rem auto; text-align:center; padding:0 1.5rem;
                         font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;">
-              <h1 style="margin-bottom:.5rem;">${isDeclined ? 'Account access declined' : 'Almost there'}</h1>
-              <p style="color:#6b6b6b;">${isDeclined
-                ? 'Access declined. Contact support if this is a mistake.'
-                : 'Enter your Etsy order number to verify your purchase.'}</p>
-              ${isDeclined ? '' : `
+              <h1 style="margin-bottom:.5rem;">${heading}</h1>
+              <p style="color:#6b6b6b;">${message}</p>
+              ${showForm ? `
               <form id="verify-purchase-form">
                 <input id="receipt-id-input" type="text" inputmode="numeric" placeholder="e.g. 1234567890" autocomplete="off"
                        style="width:100%; padding:.65rem .8rem; margin-bottom:.75rem; border:1px solid #eee2d6; border-radius:8px; font-size:1rem; box-sizing:border-box;" required />
@@ -326,7 +323,7 @@
                 </button>
               </form>
               <p id="verify-purchase-message" style="min-height:1.3rem; margin-top:1rem; font-size:.9rem; color:#b3261e;"></p>
-              `}
+              ` : ''}
               <p><a id="pending-logout" href="#" style="color:#d5641c;">Log out</a></p>
             </div>`;
           document.getElementById('pending-logout').addEventListener('click', async (e) => {
@@ -334,7 +331,7 @@
             await supabase.auth.signOut();
             window.location.href = '/login.html';
           });
-          if (!isDeclined) {
+          if (!showForm) return;
           document.getElementById('verify-purchase-form').addEventListener('submit', async (e) => {
             e.preventDefault();
             const submitBtn = document.getElementById('verify-purchase-submit');
@@ -379,7 +376,38 @@
               submitBtn.disabled = false;
             }
           });
-          }
+        }
+
+        // Approved non-admins with zero pages left get the same order-number
+        // screen as a brand-new signup, since buying more is self-serve too --
+        // only checked here (not for admins/not-yet-approved accounts), so
+        // skip the RPC call entirely when its result can't affect the branch.
+        let pagesRemaining = null;
+        if (profile?.role !== 'admin' && profile?.status === 'approved') {
+          const { data: allowanceData } = await supabase.rpc('create_landing_page_allowed', {
+            p_user_id: session.user.id,
+          });
+          pagesRemaining = allowanceData?.[0]?.remaining ?? null;
+        }
+
+        if (profile?.role !== 'admin' && profile?.status === 'declined') {
+          renderPurchaseScreen({
+            heading: 'Account access declined',
+            message: 'Access declined. Contact support if this is a mistake.',
+            showForm: false,
+          });
+        } else if (profile?.role !== 'admin' && profile?.status !== 'approved') {
+          renderPurchaseScreen({
+            heading: 'Almost there',
+            message: 'Enter your Etsy order number to verify your purchase.',
+            showForm: true,
+          });
+        } else if (profile?.role !== 'admin' && pagesRemaining === 0) {
+          renderPurchaseScreen({
+            heading: "You're out of Landing Pages",
+            message: "You've used all your Landing Pages. Enter your new Etsy order number to unlock 3 more.",
+            showForm: true,
+          });
         } else {
           // Exposed so the plain <script> below can check the page allowance
           // (create_landing_page_allowed RPC).
