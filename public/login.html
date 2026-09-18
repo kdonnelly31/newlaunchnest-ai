@@ -92,8 +92,8 @@
     </form>
 
     <form id="code-form" style="display:none;">
-      <label for="code">6-digit code</label>
-      <input id="code" type="text" inputmode="numeric" pattern="[0-9]*" maxlength="6" autocomplete="one-time-code" required />
+      <label for="code">Verification code</label>
+      <input id="code" type="text" inputmode="numeric" pattern="[0-9]*" maxlength="12" autocomplete="one-time-code" required />
 
       <button id="verify-btn" type="submit">Verify Code</button>
       <p><a id="use-different-email" href="#">Use a different email</a></p>
@@ -157,7 +157,7 @@
         }
 
         pendingEmail = email;
-        subtitle.textContent = `Enter the 6-digit code we emailed to ${email}.`;
+        subtitle.textContent = `Enter the code we emailed to ${email}.`;
         loginForm.style.display = 'none';
         codeForm.style.display = 'block';
         showMessage('Check your email for the code. Not there? Check your spam/junk folder.', 'success');
