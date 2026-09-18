@@ -82,13 +82,21 @@
 <body>
   <div class="card">
     <h1>Welcome</h1>
-    <p class="subtitle">Log in to LaunchNestAI — no password needed. We'll email you a link to sign in.</p>
+    <p class="subtitle" id="subtitle">Log in to LaunchNestAI — no password needed. We'll email you a code to sign in.</p>
 
     <form id="login-form">
       <label for="email">Email</label>
       <input id="email" type="email" autocomplete="email" required />
 
-      <button id="submit-btn" type="submit">Send Login Link</button>
+      <button id="submit-btn" type="submit">Send Code</button>
+    </form>
+
+    <form id="code-form" style="display:none;">
+      <label for="code">6-digit code</label>
+      <input id="code" type="text" inputmode="numeric" pattern="[0-9]*" maxlength="6" autocomplete="one-time-code" required />
+
+      <button id="verify-btn" type="submit">Verify Code</button>
+      <p><a id="use-different-email" href="#">Use a different email</a></p>
     </form>
 
     <p id="message"></p>
@@ -97,9 +105,14 @@
   <script type="module">
     import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
 
-    const form = document.getElementById('login-form');
+    const loginForm = document.getElementById('login-form');
     const submitBtn = document.getElementById('submit-btn');
+    const codeForm = document.getElementById('code-form');
+    const verifyBtn = document.getElementById('verify-btn');
+    const useDifferentEmail = document.getElementById('use-different-email');
+    const subtitle = document.getElementById('subtitle');
     const message = document.getElementById('message');
+    let pendingEmail = '';
 
     function showMessage(text, kind) {
       message.textContent = text;
@@ -122,19 +135,20 @@
         return;
       }
 
-      form.addEventListener('submit', async (e) => {
+      loginForm.addEventListener('submit', async (e) => {
         e.preventDefault();
         submitBtn.disabled = true;
-        showMessage('Sending your login link…', '');
+        showMessage('Sending your code…', '');
 
         const email = document.getElementById('email').value.trim();
 
         // signInWithOtp both signs in an existing user and creates a new one
-        // on first use, so there's no separate signup step.
-        const { error } = await supabase.auth.signInWithOtp({
-          email,
-          options: { emailRedirectTo: window.location.origin + '/' },
-        });
+        // on first use, so there's no separate signup step. No emailRedirectTo
+        // here -- the buyer types the code back in rather than clicking a
+        // link, which sidesteps corporate email scanners (e.g. Microsoft
+        // Defender Safe Links) silently consuming a one-time link before the
+        // person ever clicks it themselves.
+        const { error } = await supabase.auth.signInWithOtp({ email });
 
         if (error) {
           showMessage(error.message, 'error');
@@ -142,8 +156,42 @@
           return;
         }
 
-        showMessage('Check your email for a link to log in. Not there? Check your spam/junk folder.', 'success');
-        form.reset();
+        pendingEmail = email;
+        subtitle.textContent = `Enter the 6-digit code we emailed to ${email}.`;
+        loginForm.style.display = 'none';
+        codeForm.style.display = 'block';
+        showMessage('Check your email for the code. Not there? Check your spam/junk folder.', 'success');
+        document.getElementById('code').focus();
+      });
+
+      codeForm.addEventListener('submit', async (e) => {
+        e.preventDefault();
+        verifyBtn.disabled = true;
+        showMessage('Verifying…', '');
+
+        const token = document.getElementById('code').value.trim();
+
+        const { error } = await supabase.auth.verifyOtp({ email: pendingEmail, token, type: 'email' });
+
+        if (error) {
+          showMessage(error.message, 'error');
+          verifyBtn.disabled = false;
+          return;
+        }
+
+        window.location.href = '/';
+      });
+
+      useDifferentEmail.addEventListener('click', (e) => {
+        e.preventDefault();
+        pendingEmail = '';
+        codeForm.reset();
+        codeForm.style.display = 'none';
+        loginForm.style.display = '';
+        loginForm.reset();
+        submitBtn.disabled = false;
+        subtitle.textContent = 'Log in to LaunchNestAI — no password needed. We\'ll email you a code to sign in.';
+        showMessage('', '');
       });
     }
 
