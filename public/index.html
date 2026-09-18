@@ -250,10 +250,12 @@
 </style>
 </head>
 <body>
-  <span id="pages-remaining" style="display:none; position:fixed; top:1rem; right:15rem; font-size:.85rem; color:var(--muted);"></span>
-  <a id="my-pages-link" href="/my-pages.html" style="display:none; position:fixed; top:1rem; right:9rem; font-size:.85rem; color:var(--muted); text-decoration:none;">My Landing Pages</a>
-  <a id="admin-link" href="/admin.html" style="display:none; position:fixed; top:1rem; right:5rem; font-size:.85rem; color:var(--muted); text-decoration:none;">Admin</a>
-  <a id="logout-link" href="#" style="display:none; position:fixed; top:1rem; right:1.25rem; font-size:.85rem; color:var(--muted); text-decoration:none;">Log out</a>
+  <div style="position:fixed; top:1rem; right:1.25rem; display:flex; align-items:center; gap:1rem; font-size:.85rem; max-width:calc(100vw - 2.5rem); flex-wrap:wrap; justify-content:flex-end;">
+    <span id="pages-remaining" style="display:none; color:var(--muted);"></span>
+    <a id="my-pages-link" href="/my-pages.html" style="display:none; color:var(--muted); text-decoration:none;">My Landing Pages</a>
+    <a id="admin-link" href="/admin.html" style="display:none; color:var(--muted); text-decoration:none;">Admin</a>
+    <a id="logout-link" href="#" style="display:none; color:var(--muted); text-decoration:none;">Log out</a>
+  </div>
 
   <header>
     <h1>Find My Shop</h1>
