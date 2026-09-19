@@ -41,6 +41,62 @@
     font-size: .9rem;
     margin-bottom: 1rem;
   }
+  .buy-more-panel {
+    max-width: 420px;
+    margin: 0 auto 1.5rem;
+    padding: 1rem 1.25rem;
+    background: var(--card-bg);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    text-align: center;
+  }
+  .buy-more-panel p {
+    margin: 0 0 .75rem;
+    font-size: .9rem;
+    color: var(--muted);
+  }
+  .buy-more-panel a.etsy-link {
+    color: var(--accent);
+    font-weight: 600;
+    text-decoration: none;
+  }
+  .buy-more-form {
+    display: flex;
+    gap: .5rem;
+    margin-top: .5rem;
+  }
+  .buy-more-form input {
+    flex: 1;
+    padding: .55rem .7rem;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    font-family: inherit;
+    font-size: .9rem;
+    box-sizing: border-box;
+  }
+  .buy-more-form button {
+    padding: .55rem 1rem;
+    border: none;
+    border-radius: 6px;
+    background: var(--accent);
+    color: white;
+    font-size: .9rem;
+    cursor: pointer;
+    white-space: nowrap;
+  }
+  .buy-more-form button:disabled {
+    opacity: .6;
+    cursor: not-allowed;
+  }
+  #buy-more-message {
+    min-height: 1.1rem;
+    margin-top: .6rem;
+    font-size: .85rem;
+    color: var(--error);
+  }
+  #buy-more-message.success {
+    color: #1a7a35;
+  }
   .pages-grid {
     max-width: 900px;
     margin: 0 auto;
@@ -165,6 +221,16 @@
   </header>
 
   <a class="back-link" href="/index.html">← Back to shop search</a>
+
+  <div class="buy-more-panel" id="buy-more-panel" style="display:none;">
+    <p>Out of pages? <a class="etsy-link" id="buy-more-etsy-link" target="_blank" rel="noopener noreferrer">Buy the listing again on Etsy →</a>, then enter your new order number below to unlock 3 more.</p>
+    <form class="buy-more-form" id="buy-more-form">
+      <input id="buy-more-receipt-input" type="text" inputmode="numeric" placeholder="New Etsy order number" autocomplete="off" required />
+      <button id="buy-more-submit" type="submit">Verify Purchase</button>
+    </form>
+    <p id="buy-more-message"></p>
+  </div>
+
   <p id="status">Loading your pages…</p>
   <div class="pages-grid" id="pages-grid" style="display:none;"></div>
 
@@ -302,6 +368,60 @@
         await supabase.auth.signOut();
         window.location.href = '/login.html';
       });
+
+      const { data: profile } = await supabase
+        .from('profiles')
+        .select('role')
+        .eq('id', session.user.id)
+        .single();
+      if (profile?.role !== 'admin') {
+        const { data: allowanceData } = await supabase.rpc('create_landing_page_allowed', {
+          p_user_id: session.user.id,
+        });
+        if ((allowanceData?.[0]?.remaining ?? null) === 0) {
+          document.getElementById('buy-more-etsy-link').href =
+            'https://www.etsy.com/listing/4569723339/ai-landing-page-marketing-template-pdf?sr_prefetch=1&pf_from=shop_home&ref=shop_home_active_1&crt=1&dd=1&logging_key=10c1966872ff786b8a8d6a6cd14e3e1b65771cfa%3A4569723339';
+          document.getElementById('buy-more-panel').style.display = 'block';
+
+          document.getElementById('buy-more-form').addEventListener('submit', async (e) => {
+            e.preventDefault();
+            const submitBtn = document.getElementById('buy-more-submit');
+            const messageEl = document.getElementById('buy-more-message');
+            const receiptId = document.getElementById('buy-more-receipt-input').value.trim();
+            submitBtn.disabled = true;
+            messageEl.className = '';
+            messageEl.textContent = '';
+            try {
+              // Re-fetch the session instead of reusing the one captured at page
+              // load -- that token may have expired if the buyer took a while
+              // to find their order number.
+              const { data: { session: freshSession } } = await supabase.auth.getSession();
+              if (!freshSession) {
+                messageEl.textContent = 'Your session expired — please log in again.';
+                submitBtn.disabled = false;
+                return;
+              }
+              const verifyRes = await fetch('/api/verify-purchase', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${freshSession.access_token}` },
+                body: JSON.stringify({ receiptId }),
+              });
+              const verifyData = await verifyRes.json();
+              if (!verifyRes.ok) {
+                messageEl.textContent = verifyData.error || 'Something went wrong. Please try again.';
+                submitBtn.disabled = false;
+                return;
+              }
+              messageEl.className = 'success';
+              messageEl.textContent = 'Purchase verified — you have 3 more pages. Reloading…';
+              window.location.reload();
+            } catch {
+              messageEl.textContent = 'Something went wrong. Please try again.';
+              submitBtn.disabled = false;
+            }
+          });
+        }
+      }
 
       // RLS ("Users can view their own landing pages") restricts this to the
       // caller's own rows -- no server endpoint needed for a read this simple.

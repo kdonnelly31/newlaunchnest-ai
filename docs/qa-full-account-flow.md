@@ -16,7 +16,7 @@ A step-by-step script for manually testing the entire buyer journey, start to fi
 - [ ] Note the Etsy order number from the confirmation.
 - [ ] Go to `launchnestai.com/login.html`, enter the test email, click **Send Code**.
 - [ ] Check email — confirm it shows a **plain numeric code**, no clickable link.
-- [ ] Enter the code → confirm you land on **"Almost there"** with an order-number form (not bounced back to login).
+- [ ] Enter the code → confirm you land on **"Order Number"** with an order-number form (not bounced back to login).
 - [ ] Enter the order number → click **Verify Purchase**.
 - [ ] Confirm it succeeds and you land on **"Find My Shop"**.
 - [ ] Check `/admin.html`: this account's **Status = approved**, **Etsy Shop** is auto-filled (no manual typing needed), **Landing Pages = 0/3 (3 left)**.
@@ -49,17 +49,18 @@ A step-by-step script for manually testing the entire buyer journey, start to fi
 ## 4. Running out of pages
 
 - [ ] Create landing pages until the account hits **0/3 (0 left)** in `/admin.html`.
-- [ ] Log out and back in (or refresh) — confirm you now see **"You're out of Landing Pages"** instead of "Find My Shop."
-- [ ] Confirm there's a **"View my existing landing pages →"** link on this screen, and it correctly opens My Landing Pages (you should NOT be locked out of pages you already made).
+- [ ] Log out and back in (or refresh) — confirm you're sent straight to **"My Landing Pages"** instead of "Find My Shop" (no order-number screen).
+- [ ] Confirm a **"Buy more pages?"** panel now appears at the top of My Landing Pages, with a **"Buy the listing again on Etsy →"** link and an order-number field + **Verify Purchase** button inline (no separate screen).
+- [ ] Confirm you can still see and open every page you already made — you should NOT be locked out of pages you already made.
 - [ ] Confirm the top-right nav text (page count / My Landing Pages / Admin / Log out) doesn't overlap or run together.
 
 ---
 
 ## 5. Repurchase (buying more pages)
 
-- [ ] While on the "You're out of Landing Pages" screen, buy the listing again on Etsy (a **new**, different order number).
-- [ ] Enter the new order number and submit.
-- [ ] Confirm it succeeds and lands you on **"Find My Shop"**.
+- [ ] From the panel on My Landing Pages, click **"Buy the listing again on Etsy →"** and buy the listing (a **new**, different order number).
+- [ ] Back on My Landing Pages, type the new order number into the inline field and click **Verify Purchase**.
+- [ ] Confirm it succeeds, the page reloads, and the panel disappears (pages are no longer at 0).
 - [ ] Check `/admin.html`: **Landing Pages** should now read **3/6 (3 left)** — used stays the same, total goes up by 3.
 - [ ] Confirm **Etsy Shop** and **Status** are unchanged (repurchase never re-approves or overwrites the shop name unless it was empty).
 
