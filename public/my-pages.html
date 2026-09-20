@@ -493,6 +493,14 @@
                 submitBtn.disabled = false;
                 return;
               }
+              if (verifyData.alreadyClaimed) {
+                // Same order number this account already used -- no new
+                // pages, so don't claim otherwise or bounce them anywhere.
+                messageEl.className = '';
+                messageEl.textContent = "You've already used this order number — no new pages to add. Enter the number from your newest order instead.";
+                submitBtn.disabled = false;
+                return;
+              }
               messageEl.className = 'success';
               messageEl.textContent = 'Purchase verified — you have 3 more pages. Taking you back to shop search…';
               setTimeout(() => { window.location.href = '/index.html'; }, 1200);

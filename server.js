@@ -818,8 +818,11 @@ app.post('/api/verify-purchase', requireAuth, async (req, res) => {
 
     if (existingClaim?.user_id === req.user.id) {
       // Already claimed by this same account (e.g. a retried submission
-      // after a network hiccup) -- nothing new to verify or grant.
-      return res.json({ approved: true });
+      // after a network hiccup, or a customer resubmitting an old order
+      // number by mistake) -- nothing new to verify or grant. Flagged
+      // separately from a fresh approval so the client doesn't claim pages
+      // were added when none were.
+      return res.json({ approved: true, alreadyClaimed: true });
     }
 
     let receipt = null;
