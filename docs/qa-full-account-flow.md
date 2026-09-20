@@ -50,19 +50,24 @@ A step-by-step script for manually testing the entire buyer journey, start to fi
 
 - [ ] Create landing pages until the account hits **0/3 (0 left)** in `/admin.html`.
 - [ ] Log out and back in (or refresh) — confirm you're sent straight to **"My Landing Pages"** instead of "Find My Shop" (no order-number screen).
-- [ ] Confirm a **"Buy more pages?"** panel now appears at the top of My Landing Pages, with a **"Buy the listing again on Etsy →"** link and an order-number field + **Verify Purchase** button inline (no separate screen).
+- [ ] Confirm a **"Buy more pages?"** panel now appears at the top of My Landing Pages, with a **"Buy the listing again on Etsy →"** link and, tucked under "Already have your order number?", a manual order-number field + **Verify Purchase** button as a fallback.
 - [ ] Confirm you can still see and open every page you already made — you should NOT be locked out of pages you already made.
 - [ ] Confirm the top-right nav text (page count / My Landing Pages / Admin / Log out) doesn't overlap or run together.
 
 ---
 
-## 5. Repurchase (buying more pages)
+## 5. Repurchase — automatic (buying more pages)
 
-- [ ] From the panel on My Landing Pages, click **"Buy the listing again on Etsy →"** and buy the listing (a **new**, different order number).
-- [ ] Back on My Landing Pages, type the new order number into the inline field and click **Verify Purchase**.
-- [ ] Confirm it succeeds, the page reloads, and the panel disappears (pages are no longer at 0).
+- [ ] From the panel on My Landing Pages, click **"Buy the listing again on Etsy →"** and buy the listing on the same Etsy account as the first purchase (a **new**, different order number).
+- [ ] Switch back to (or close the Etsy tab and return to) the LaunchNestAI tab — confirm it shows **"Checking for your new purchase…"** without you clicking anything.
+- [ ] Confirm it finds the order within a few checks and shows **"Purchase found — you have 3 more pages!"**, then takes you to Find My Shop automatically.
 - [ ] Check `/admin.html`: **Landing Pages** should now read **3/6 (3 left)** — used stays the same, total goes up by 3.
 - [ ] Confirm **Etsy Shop** and **Status** are unchanged (repurchase never re-approves or overwrites the shop name unless it was empty).
+
+**Fallback path (manual order number):**
+- [ ] With pages back at 0, open **"Already have your order number?"** on My Landing Pages and submit a bad number — confirm a clear inline error, not a page reload.
+- [ ] Submit a real, valid order number instead — confirm it grants 3 pages and sends you to Find My Shop.
+- [ ] Confirm this still works for an account with no `etsy_buyer_user_id` on file (e.g. one approved via the admin override field) — automatic detection should just find nothing and leave the manual form usable.
 
 ---
 

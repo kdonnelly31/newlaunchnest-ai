@@ -60,6 +60,21 @@
     font-weight: 600;
     text-decoration: none;
   }
+  #auto-check-status {
+    min-height: 1.1rem;
+    margin: 0 0 .5rem;
+    font-size: .85rem;
+    color: var(--muted);
+  }
+  #auto-check-status.success {
+    color: #1a7a35;
+  }
+  #buy-more-manual summary {
+    cursor: pointer;
+    font-size: .85rem;
+    color: var(--muted);
+    margin-bottom: .5rem;
+  }
   .buy-more-form {
     display: flex;
     gap: .5rem;
@@ -223,12 +238,16 @@
   <a class="back-link" href="/index.html">← Back to shop search</a>
 
   <div class="buy-more-panel" id="buy-more-panel" style="display:none;">
-    <p>Out of pages? <a class="etsy-link" id="buy-more-etsy-link" target="_blank" rel="noopener noreferrer">Buy the listing again on Etsy →</a>, then enter your new order number below to unlock 3 more.</p>
-    <form class="buy-more-form" id="buy-more-form">
-      <input id="buy-more-receipt-input" type="text" inputmode="numeric" placeholder="New Etsy order number" autocomplete="off" required />
-      <button id="buy-more-submit" type="submit">Verify Purchase</button>
-    </form>
-    <p id="buy-more-message"></p>
+    <p>Out of pages? <a class="etsy-link" id="buy-more-etsy-link" target="_blank" rel="noopener noreferrer">Buy the listing again on Etsy →</a> — come back to this tab afterward and we'll pick up your new purchase automatically.</p>
+    <p id="auto-check-status"></p>
+    <details id="buy-more-manual">
+      <summary>Already have your order number?</summary>
+      <form class="buy-more-form" id="buy-more-form">
+        <input id="buy-more-receipt-input" type="text" inputmode="numeric" placeholder="New Etsy order number" autocomplete="off" required />
+        <button id="buy-more-submit" type="submit">Verify Purchase</button>
+      </form>
+      <p id="buy-more-message"></p>
+    </details>
   </div>
 
   <p id="status">Loading your pages…</p>
@@ -379,9 +398,71 @@
           p_user_id: session.user.id,
         });
         if ((allowanceData?.[0]?.remaining ?? null) === 0) {
-          document.getElementById('buy-more-etsy-link').href =
+          const etsyLink = document.getElementById('buy-more-etsy-link');
+          const autoStatus = document.getElementById('auto-check-status');
+          etsyLink.href =
             'https://www.etsy.com/listing/4569723339/ai-landing-page-marketing-template-pdf?sr_prefetch=1&pf_from=shop_home&ref=shop_home_active_1&crt=1&dd=1&logging_key=10c1966872ff786b8a8d6a6cd14e3e1b65771cfa%3A4569723339';
           document.getElementById('buy-more-panel').style.display = 'block';
+
+          // Automatic path: once they've clicked through to Etsy, check for a
+          // matching new purchase every time this tab regains focus (covers
+          // both switching back to it and closing the Etsy tab). A handful of
+          // bounded retries covers Etsy still processing the order; after
+          // that it gives up quietly -- the manual form below always works.
+          let awaitingPurchase = false;
+          let checking = false;
+          let retriesLeft = 0;
+          const MAX_RETRIES = 5;
+          const RETRY_DELAY_MS = 8000;
+
+          etsyLink.addEventListener('click', () => {
+            awaitingPurchase = true;
+            retriesLeft = MAX_RETRIES;
+          });
+
+          async function checkForNewPurchase() {
+            if (checking) return;
+            checking = true;
+            autoStatus.className = '';
+            autoStatus.textContent = 'Checking for your new purchase…';
+            try {
+              const { data: { session: freshSession } } = await supabase.auth.getSession();
+              if (!freshSession) {
+                autoStatus.textContent = '';
+                awaitingPurchase = false;
+                return;
+              }
+              const checkRes = await fetch('/api/check-new-purchase', {
+                method: 'POST',
+                headers: { Authorization: `Bearer ${freshSession.access_token}` },
+              });
+              const checkData = await checkRes.json();
+              if (checkRes.ok && checkData.found) {
+                awaitingPurchase = false;
+                autoStatus.className = 'success';
+                autoStatus.textContent = 'Purchase found — you have 3 more pages! Taking you back to shop search…';
+                setTimeout(() => { window.location.href = '/index.html'; }, 1200);
+                return;
+              }
+              retriesLeft -= 1;
+              if (retriesLeft > 0) {
+                autoStatus.textContent = "Didn't find it yet — checking again in a moment…";
+                setTimeout(() => { checking = false; checkForNewPurchase(); }, RETRY_DELAY_MS);
+                return;
+              }
+              awaitingPurchase = false;
+              autoStatus.textContent = "Didn't find a new purchase yet — you can enter your order number below instead.";
+            } catch {
+              awaitingPurchase = false;
+              autoStatus.textContent = '';
+            } finally {
+              checking = false;
+            }
+          }
+
+          window.addEventListener('focus', () => {
+            if (awaitingPurchase && !checking) checkForNewPurchase();
+          });
 
           document.getElementById('buy-more-form').addEventListener('submit', async (e) => {
             e.preventDefault();
@@ -413,8 +494,8 @@
                 return;
               }
               messageEl.className = 'success';
-              messageEl.textContent = 'Purchase verified — you have 3 more pages. Reloading…';
-              window.location.reload();
+              messageEl.textContent = 'Purchase verified — you have 3 more pages. Taking you back to shop search…';
+              setTimeout(() => { window.location.href = '/index.html'; }, 1200);
             } catch {
               messageEl.textContent = 'Something went wrong. Please try again.';
               submitBtn.disabled = false;

@@ -128,7 +128,7 @@ async function requireApproved(req, res, next) {
 
   const { data: profile, error: profileError } = await supabaseAdmin
     .from('profiles')
-    .select('role, status, etsy_shop_name')
+    .select('email, role, status, etsy_shop_name, etsy_buyer_user_id, purchase_verified_at')
     .eq('id', user.id)
     .single();
   if (profileError || (profile?.role !== 'admin' && profile?.status !== 'approved')) {
@@ -872,6 +872,9 @@ app.post('/api/verify-purchase', requireAuth, async (req, res) => {
         // answer to the "Your Etsy Shop Name" personalization question is
         // missing (e.g. an older order placed before that question existed).
         ...(result.shopName ? { etsy_shop_name: result.shopName } : {}),
+        // Lets a future repurchase be auto-detected instead of asking the
+        // buyer to retype another order number -- see /api/check-new-purchase.
+        ...(result.buyerUserId ? { etsy_buyer_user_id: result.buyerUserId } : {}),
       })
       .eq('id', req.user.id);
     if (updateError) throw new Error(updateError.message);
@@ -886,6 +889,103 @@ app.post('/api/verify-purchase', requireAuth, async (req, res) => {
   } catch (err) {
     console.error(err);
     res.status(502).json({ error: 'Something went wrong checking your order — try again in a moment.' });
+  }
+});
+
+// Lets an already-approved customer get +3 pages without retyping an order
+// number: looks at recent receipts on the seller's own Etsy shop and matches
+// one against the buyer's Etsy account ID captured on their last purchase
+// (see etsy_buyer_user_id) -- exact and can't be mistyped, unlike the
+// shop-name personalization answer. Called when the My Landing Pages tab
+// regains focus after the customer clicks through to buy again on Etsy.
+app.post('/api/check-new-purchase', requireApproved, async (req, res) => {
+  if (req.profile.role === 'admin') {
+    return res.json({ found: false });
+  }
+  if (!req.profile.etsy_buyer_user_id) {
+    // Approved before this feature existed, or via a manual admin override --
+    // nothing on file to match a new receipt against.
+    return res.json({ found: false });
+  }
+  if (!ETSY_PRODUCT_LISTING_ID) {
+    return res.status(503).json({ error: 'Purchase verification is temporarily unavailable — contact support.' });
+  }
+
+  try {
+    const etsyToken = await getValidEtsyToken(supabaseAdmin, ETSY_API_KEY);
+    if (!etsyToken) {
+      return res.status(503).json({ error: 'Purchase verification is temporarily unavailable — contact support.' });
+    }
+
+    // Only look at receipts created since their last verified purchase --
+    // anything earlier is either already claimed or predates this account,
+    // and keeps the request small instead of paging through shop history.
+    const minCreated = req.profile.purchase_verified_at
+      ? Math.floor(new Date(req.profile.purchase_verified_at).getTime() / 1000)
+      : 0;
+
+    const receiptsRes = await fetch(
+      `${ETSY_BASE}/shops/${etsyToken.shopId}/receipts?was_paid=true&min_created=${minCreated}&sort_on=created&sort_order=desc&limit=50`,
+      { headers: { 'x-api-key': API_KEY_HEADER, Authorization: `Bearer ${etsyToken.accessToken}` } }
+    );
+    if (!receiptsRes.ok) {
+      throw new Error(`Etsy API ${receiptsRes.status}: ${await receiptsRes.text()}`);
+    }
+    const { results: receipts = [] } = await receiptsRes.json();
+
+    // Filter to this product first, then match the buyer -- a customer may
+    // have other, unrelated Etsy purchases in this same window.
+    const candidate = receipts
+      .filter(r => (r.transactions || []).some(t => String(t.listing_id) === String(ETSY_PRODUCT_LISTING_ID)))
+      .find(r => String(r.buyer_user_id) === String(req.profile.etsy_buyer_user_id));
+
+    if (!candidate) {
+      return res.json({ found: false });
+    }
+
+    const result = evaluateReceipt({ receipt: candidate, listingId: ETSY_PRODUCT_LISTING_ID, claimedByOtherUser: false });
+    if (!result.ok) {
+      // Not paid, canceled, refunded, etc. -- nothing to grant yet.
+      return res.json({ found: false });
+    }
+
+    const receiptId = String(candidate.receipt_id);
+
+    const { data: existingClaim } = await supabaseAdmin
+      .from('claimed_etsy_receipts')
+      .select('user_id')
+      .eq('receipt_id', receiptId)
+      .maybeSingle();
+    if (existingClaim) {
+      return res.json({ found: false });
+    }
+
+    const { error: claimInsertError } = await supabaseAdmin
+      .from('claimed_etsy_receipts')
+      .insert({ receipt_id: receiptId, user_id: req.user.id });
+    if (claimInsertError) {
+      // Race with a manual submission of the same receipt, or a duplicate
+      // check firing twice -- either way, nothing new to grant here.
+      if (claimInsertError.code === '23505') {
+        return res.json({ found: false });
+      }
+      throw new Error(claimInsertError.message);
+    }
+
+    const { error: updateError } = await supabaseAdmin
+      .from('profiles')
+      .update({ etsy_receipt_id: receiptId, purchase_verified_at: new Date().toISOString() })
+      .eq('id', req.user.id);
+    if (updateError) throw new Error(updateError.message);
+
+    const { error: grantError } = await supabaseAdmin
+      .rpc('grant_additional_pages', { p_email: req.profile.email, p_amount: 3 });
+    if (grantError) throw new Error(grantError.message);
+
+    res.json({ found: true });
+  } catch (err) {
+    console.error(err);
+    res.status(502).json({ error: 'Something went wrong checking for a new purchase.' });
   }
 });
 
