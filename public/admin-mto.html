@@ -1,0 +1,578 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Made-to-Order Admin · Find My Shop</title>
+<style>
+  :root {
+    --bg: #fdfaf6;
+    --ink: #222;
+    --muted: #6b6b6b;
+    --accent: #d5641c;
+    --card-bg: #ffffff;
+    --border: #eee2d6;
+    --error: #b3261e;
+    --success: #1a7a35;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    background: var(--bg);
+    color: var(--ink);
+  }
+  header {
+    padding: 2rem 1.5rem 1rem;
+    text-align: center;
+  }
+  header h1 { margin: 0 0 .25rem; font-size: 1.8rem; }
+  header p { margin: 0; color: var(--muted); }
+  header a { color: var(--accent); }
+  #status {
+    text-align: center;
+    color: var(--muted);
+    padding: 0 1rem 1rem;
+  }
+  #status.error { color: var(--error); }
+  #status.success { color: var(--success); }
+  .wrap {
+    max-width: 1100px;
+    margin: 0 auto;
+    padding: 0 1.5rem 3rem;
+  }
+  .panel {
+    background: var(--card-bg);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 1.25rem 1.5rem;
+    margin-bottom: 1.5rem;
+  }
+  .panel h2 {
+    margin: 0 0 1rem;
+    font-size: 1.15rem;
+  }
+  .field-row {
+    display: flex;
+    align-items: center;
+    gap: .6rem;
+    margin-bottom: .85rem;
+    flex-wrap: wrap;
+  }
+  .field-row label {
+    min-width: 9rem;
+    color: var(--muted);
+    font-size: .9rem;
+  }
+  input[type="datetime-local"], input[type="text"] {
+    padding: .4rem .55rem;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    font-size: .9rem;
+  }
+  .panel-actions { display: flex; gap: .6rem; align-items: center; flex-wrap: wrap; }
+  button {
+    padding: .45rem .85rem;
+    border: none;
+    border-radius: 6px;
+    font-size: .85rem;
+    cursor: pointer;
+    background: var(--accent);
+    color: #fff;
+  }
+  button.secondary {
+    background: var(--card-bg);
+    color: var(--ink);
+    border: 1px solid var(--border);
+  }
+  button:disabled { opacity: .5; cursor: not-allowed; }
+  .sync-result {
+    margin-top: .75rem;
+    font-size: .85rem;
+    color: var(--muted);
+  }
+  .table-wrap { overflow-x: auto; }
+  table {
+    width: 100%;
+    border-collapse: collapse;
+    background: var(--card-bg);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    overflow: hidden;
+  }
+  th, td {
+    text-align: left;
+    padding: .7rem .9rem;
+    border-bottom: 1px solid var(--border);
+    font-size: .88rem;
+  }
+  th { color: var(--muted); font-weight: 600; }
+  tr:last-child td { border-bottom: none; }
+  tbody tr:hover { background: #fbf5ee; }
+  a.row-link { color: var(--ink); text-decoration: none; display: block; }
+  a.row-link:hover { color: var(--accent); }
+  .badge {
+    display: inline-block;
+    padding: .2rem .55rem;
+    border-radius: 999px;
+    font-size: .78rem;
+    font-weight: 600;
+  }
+  .badge-attention { background: #fbe0de; color: var(--error); }
+  .badge-ok { background: #dcf3e3; color: var(--success); }
+  .filter-row {
+    display: flex;
+    align-items: center;
+    gap: .5rem;
+    margin-bottom: 1rem;
+    font-size: .88rem;
+    color: var(--muted);
+  }
+  .kv-table td:first-child {
+    color: var(--muted);
+    width: 12rem;
+    white-space: nowrap;
+  }
+  .assets-grid {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 1rem;
+  }
+  .asset-card {
+    width: 11rem;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    overflow: hidden;
+    background: var(--card-bg);
+    font-size: .8rem;
+  }
+  .asset-card img {
+    width: 100%;
+    height: 8rem;
+    object-fit: cover;
+    display: block;
+    background: #f4ede4;
+  }
+  .asset-card .placeholder {
+    width: 100%;
+    height: 8rem;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: #f4ede4;
+    color: var(--muted);
+    text-align: center;
+    padding: .5rem;
+  }
+  .asset-card .meta { padding: .5rem .6rem; }
+  .asset-card .meta div { margin-bottom: .2rem; word-break: break-word; }
+  .back-link { display: inline-block; margin-bottom: 1rem; color: var(--accent); text-decoration: none; font-size: .9rem; }
+</style>
+</head>
+<body>
+  <a id="my-pages-link" href="/my-pages.html" style="display:none; position:fixed; top:1rem; right:9rem; font-size:.85rem; color:var(--muted); text-decoration:none;">My Pages</a>
+  <a id="logout-link" href="#" style="display:none; position:fixed; top:1rem; right:1.25rem; font-size:.85rem; color:var(--muted); text-decoration:none;">Log out</a>
+
+  <header>
+    <h1>Made-to-Order Orders</h1>
+    <p>Manage intake settings, sync status, and personalization orders</p>
+    <p><a href="/admin.html">&larr; Back to Admin</a></p>
+  </header>
+
+  <p id="status">Loading…</p>
+
+  <div class="wrap">
+    <div class="panel" id="settings-panel" style="display:none">
+      <h2>Intake Settings</h2>
+      <div class="field-row">
+        <label for="enabled-checkbox">Enabled</label>
+        <input type="checkbox" id="enabled-checkbox" />
+      </div>
+      <div class="field-row">
+        <label for="cutover-input">Cutover time</label>
+        <input type="datetime-local" id="cutover-input" />
+      </div>
+      <div class="panel-actions">
+        <button id="save-settings-btn">Save</button>
+        <button id="sync-now-btn" class="secondary">Sync now</button>
+      </div>
+      <p class="sync-result" id="settings-result"></p>
+      <p class="sync-result" id="sync-result"></p>
+    </div>
+
+    <div id="orders-section" style="display:none">
+      <div class="filter-row">
+        <input type="checkbox" id="needs-attention-filter" />
+        <label for="needs-attention-filter">Show only orders needing attention</label>
+      </div>
+      <div class="table-wrap">
+        <table id="orders-table">
+          <thead>
+            <tr>
+              <th>Buyer</th>
+              <th>Receipt / Transaction</th>
+              <th>Payment State</th>
+              <th>Needs Attention</th>
+              <th>Last Synced</th>
+            </tr>
+          </thead>
+          <tbody id="orders-body"></tbody>
+        </table>
+      </div>
+    </div>
+
+    <div id="detail-section" style="display:none">
+      <a href="/admin-mto.html" class="back-link">&larr; Back to orders</a>
+
+      <div class="panel">
+        <h2>Order</h2>
+        <table class="kv-table" id="order-kv-table"></table>
+      </div>
+
+      <div class="panel" id="snapshot-panel" style="display:none">
+        <h2>Resolved Listing Snapshot</h2>
+        <table class="kv-table" id="snapshot-kv-table"></table>
+      </div>
+
+      <div class="panel">
+        <h2>Personalization Answers</h2>
+        <div class="table-wrap">
+          <table id="answers-table">
+            <thead>
+              <tr>
+                <th>Question</th>
+                <th>Answer</th>
+                <th>Mapped Field</th>
+                <th>Mapping Version</th>
+              </tr>
+            </thead>
+            <tbody id="answers-body"></tbody>
+          </table>
+        </div>
+      </div>
+
+      <div class="panel">
+        <h2>Assets</h2>
+        <div class="assets-grid" id="assets-grid"></div>
+      </div>
+    </div>
+  </div>
+
+  <script type="module">
+    import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
+
+    const statusEl = document.getElementById('status');
+    const settingsPanel = document.getElementById('settings-panel');
+    const ordersSection = document.getElementById('orders-section');
+    const detailSection = document.getElementById('detail-section');
+
+    function setStatus(text, kind) {
+      statusEl.textContent = text;
+      statusEl.className = kind || '';
+    }
+
+    function escapeHtml(value) {
+      if (value === null || value === undefined) return '';
+      return String(value)
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;');
+    }
+
+    function formatDate(value) {
+      if (!value) return '—';
+      const d = new Date(value);
+      if (Number.isNaN(d.getTime())) return String(value);
+      return d.toLocaleString();
+    }
+
+    // Converts an ISO timestamp into the local "YYYY-MM-DDTHH:mm" format
+    // <input type="datetime-local"> expects.
+    function isoToDatetimeLocal(iso) {
+      if (!iso) return '';
+      const d = new Date(iso);
+      if (Number.isNaN(d.getTime())) return '';
+      const pad = (n) => String(n).padStart(2, '0');
+      return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
+    }
+
+    function datetimeLocalToIso(value) {
+      if (!value) return null;
+      const d = new Date(value);
+      if (Number.isNaN(d.getTime())) return null;
+      return d.toISOString();
+    }
+
+    async function loadSettings(accessToken) {
+      const res = await fetch('/api/admin/mto/settings', {
+        headers: { Authorization: `Bearer ${accessToken}` },
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        setStatus(data.error || 'Could not load intake settings.', 'error');
+        return;
+      }
+      document.getElementById('enabled-checkbox').checked = Boolean(data.enabled);
+      document.getElementById('cutover-input').value = isoToDatetimeLocal(data.cutoverAt);
+    }
+
+    async function saveSettings(accessToken) {
+      const resultEl = document.getElementById('settings-result');
+      const btn = document.getElementById('save-settings-btn');
+      btn.disabled = true;
+      const enabled = document.getElementById('enabled-checkbox').checked;
+      const cutoverAt = datetimeLocalToIso(document.getElementById('cutover-input').value);
+      try {
+        const res = await fetch('/api/admin/mto/settings', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${accessToken}` },
+          body: JSON.stringify({ enabled, cutoverAt }),
+        });
+        const data = await res.json();
+        if (!res.ok) {
+          resultEl.textContent = data.error || 'Could not save settings.';
+          resultEl.style.color = 'var(--error)';
+          return;
+        }
+        document.getElementById('enabled-checkbox').checked = Boolean(data.enabled);
+        document.getElementById('cutover-input').value = isoToDatetimeLocal(data.cutoverAt);
+        resultEl.textContent = 'Settings saved.';
+        resultEl.style.color = 'var(--success)';
+      } finally {
+        btn.disabled = false;
+      }
+    }
+
+    async function syncNow(accessToken) {
+      const resultEl = document.getElementById('sync-result');
+      const btn = document.getElementById('sync-now-btn');
+      btn.disabled = true;
+      resultEl.textContent = 'Syncing…';
+      resultEl.style.color = 'var(--muted)';
+      try {
+        const res = await fetch('/api/admin/mto/sync-now', {
+          method: 'POST',
+          headers: { Authorization: `Bearer ${accessToken}` },
+        });
+        const data = await res.json();
+        if (!res.ok) {
+          resultEl.textContent = data.error || 'Sync failed.';
+          resultEl.style.color = 'var(--error)';
+          return;
+        }
+        if (data.skipped) {
+          resultEl.textContent = `Sync skipped (${data.reason}).`;
+          resultEl.style.color = 'var(--muted)';
+        } else {
+          resultEl.textContent = `Sync complete — ${data.receiptsSeen} receipt(s) seen, ${data.ordersCreated} created, ${data.ordersUpdated} updated.`;
+          resultEl.style.color = 'var(--success)';
+        }
+      } finally {
+        btn.disabled = false;
+      }
+    }
+
+    function renderOrderRow(order) {
+      const tr = document.createElement('tr');
+      const attentionBadge = order.needs_attention
+        ? `<span class="badge badge-attention" title="${escapeHtml(order.attention_reason || '')}">${escapeHtml(order.attention_reason || 'Needs attention')}</span>`
+        : '';
+      tr.innerHTML = `
+        <td><a class="row-link" href="/admin-mto.html?order=${encodeURIComponent(order.id)}">${escapeHtml(order.buyer_display_name) || '—'}</a></td>
+        <td><a class="row-link" href="/admin-mto.html?order=${encodeURIComponent(order.id)}">${escapeHtml(order.receipt_id)} / ${escapeHtml(order.transaction_id)}</a></td>
+        <td>${escapeHtml(order.payment_state) || '—'}</td>
+        <td>${attentionBadge}</td>
+        <td>${formatDate(order.last_synced_at)}</td>
+      `;
+      return tr;
+    }
+
+    async function loadOrders(accessToken) {
+      const tbody = document.getElementById('orders-body');
+      const needsAttentionOnly = document.getElementById('needs-attention-filter').checked;
+      const url = needsAttentionOnly ? '/api/admin/mto/orders?needsAttention=true' : '/api/admin/mto/orders';
+      const res = await fetch(url, { headers: { Authorization: `Bearer ${accessToken}` } });
+      const data = await res.json();
+      if (!res.ok) {
+        setStatus(data.error || 'Could not load orders.', 'error');
+        return;
+      }
+      tbody.innerHTML = '';
+      if (!data.orders.length) {
+        const tr = document.createElement('tr');
+        tr.innerHTML = `<td colspan="5" style="color:var(--muted); text-align:center;">No orders found.</td>`;
+        tbody.appendChild(tr);
+        return;
+      }
+      for (const order of data.orders) {
+        tbody.appendChild(renderOrderRow(order));
+      }
+    }
+
+    function renderKvRow(table, label, value) {
+      const tr = document.createElement('tr');
+      const td1 = document.createElement('td');
+      td1.textContent = label;
+      const td2 = document.createElement('td');
+      td2.innerHTML = value;
+      tr.appendChild(td1);
+      tr.appendChild(td2);
+      table.appendChild(tr);
+    }
+
+    function renderAssetCard(asset) {
+      const card = document.createElement('div');
+      card.className = 'asset-card';
+      const media = asset.signedUrl
+        ? `<img src="${escapeHtml(asset.signedUrl)}" alt="${escapeHtml(asset.content_type || 'asset')}" onerror="this.replaceWith(Object.assign(document.createElement('div'), { className: 'placeholder', textContent: 'Preview unavailable' }))" />`
+        : `<div class="placeholder">${escapeHtml(asset.status) || 'No preview'}</div>`;
+      card.innerHTML = `
+        ${media}
+        <div class="meta">
+          <div><strong>Status:</strong> ${escapeHtml(asset.status) || '—'}</div>
+          <div><strong>Type:</strong> ${escapeHtml(asset.content_type) || '—'}</div>
+          <div><strong>Size:</strong> ${asset.byte_size ? `${asset.byte_size} bytes` : '—'}</div>
+          ${asset.failure_reason ? `<div style="color:var(--error);"><strong>Failure:</strong> ${escapeHtml(asset.failure_reason)}</div>` : ''}
+        </div>
+      `;
+      return card;
+    }
+
+    async function loadOrderDetail(accessToken, orderId) {
+      const res = await fetch(`/api/admin/mto/orders/${encodeURIComponent(orderId)}`, {
+        headers: { Authorization: `Bearer ${accessToken}` },
+      });
+      const data = await res.json();
+      if (res.status === 404) {
+        setStatus('Order not found.', 'error');
+        return;
+      }
+      if (!res.ok) {
+        setStatus(data.error || 'Could not load order.', 'error');
+        return;
+      }
+
+      const { order, answers, assets } = data;
+
+      const orderTable = document.getElementById('order-kv-table');
+      orderTable.innerHTML = '';
+      renderKvRow(orderTable, 'Order ID', escapeHtml(order.id));
+      renderKvRow(orderTable, 'Receipt ID', escapeHtml(order.receipt_id));
+      renderKvRow(orderTable, 'Transaction ID', escapeHtml(order.transaction_id));
+      renderKvRow(orderTable, 'Buyer', escapeHtml(order.buyer_display_name) || '—');
+      renderKvRow(orderTable, 'Payment State', escapeHtml(order.payment_state) || '—');
+      renderKvRow(orderTable, 'Fulfillment Status', escapeHtml(order.fulfillment_status) || '—');
+      renderKvRow(
+        orderTable,
+        'Needs Attention',
+        order.needs_attention
+          ? `<span class="badge badge-attention">${escapeHtml(order.attention_reason || 'Needs attention')}</span>`
+          : `<span class="badge badge-ok">No</span>`,
+      );
+      renderKvRow(orderTable, 'Receipt Created', formatDate(order.receipt_created_at));
+      renderKvRow(orderTable, 'Last Synced', formatDate(order.last_synced_at));
+
+      const snapshot = order.resolved_listing_snapshot;
+      const snapshotPanel = document.getElementById('snapshot-panel');
+      if (snapshot && typeof snapshot === 'object') {
+        snapshotPanel.style.display = 'block';
+        const snapshotTable = document.getElementById('snapshot-kv-table');
+        snapshotTable.innerHTML = '';
+        renderKvRow(snapshotTable, 'Title', escapeHtml(snapshot.title) || '—');
+        renderKvRow(
+          snapshotTable,
+          'Price',
+          snapshot.price !== undefined && snapshot.price !== null
+            ? `${escapeHtml(snapshot.price)} ${escapeHtml(snapshot.currency) || ''}`
+            : '—',
+        );
+        renderKvRow(snapshotTable, 'State', escapeHtml(snapshot.state) || '—');
+      } else {
+        snapshotPanel.style.display = 'none';
+      }
+
+      const answersBody = document.getElementById('answers-body');
+      answersBody.innerHTML = '';
+      if (!answers.length) {
+        answersBody.innerHTML = `<tr><td colspan="4" style="color:var(--muted); text-align:center;">No personalization answers.</td></tr>`;
+      } else {
+        for (const answer of answers) {
+          const tr = document.createElement('tr');
+          tr.innerHTML = `
+            <td>${escapeHtml(answer.formatted_name)}</td>
+            <td>${escapeHtml(answer.formatted_value)}</td>
+            <td>${escapeHtml(answer.mapped_field) || '—'}</td>
+            <td>${escapeHtml(answer.mapping_version) || '—'}</td>
+          `;
+          answersBody.appendChild(tr);
+        }
+      }
+
+      const assetsGrid = document.getElementById('assets-grid');
+      assetsGrid.innerHTML = '';
+      if (!assets.length) {
+        assetsGrid.innerHTML = `<p style="color:var(--muted);">No assets.</p>`;
+      } else {
+        for (const asset of assets) {
+          assetsGrid.appendChild(renderAssetCard(asset));
+        }
+      }
+    }
+
+    async function init() {
+      const configRes = await fetch('/api/config');
+      if (!configRes.ok) {
+        setStatus('Admin panel is not available — the site is missing its Supabase configuration.', 'error');
+        return;
+      }
+      const { supabaseUrl, supabaseAnonKey } = await configRes.json();
+      const supabase = createClient(supabaseUrl, supabaseAnonKey);
+
+      const { data: { session } } = await supabase.auth.getSession();
+      if (!session) {
+        window.location.href = '/login.html';
+        return;
+      }
+
+      const myPagesLink = document.getElementById('my-pages-link');
+      myPagesLink.style.display = 'block';
+
+      const logoutLink = document.getElementById('logout-link');
+      logoutLink.style.display = 'block';
+      logoutLink.addEventListener('click', async (e) => {
+        e.preventDefault();
+        await supabase.auth.signOut();
+        window.location.href = '/login.html';
+      });
+
+      const accessToken = session.access_token;
+      const orderId = new URLSearchParams(window.location.search).get('order');
+
+      document.getElementById('save-settings-btn').addEventListener('click', () => saveSettings(accessToken));
+      document.getElementById('sync-now-btn').addEventListener('click', () => syncNow(accessToken));
+      document.getElementById('needs-attention-filter').addEventListener('change', () => loadOrders(accessToken));
+
+      settingsPanel.style.display = 'block';
+      await loadSettings(accessToken);
+
+      if (orderId) {
+        ordersSection.style.display = 'none';
+        detailSection.style.display = 'block';
+        setStatus('');
+        await loadOrderDetail(accessToken, orderId);
+      } else {
+        detailSection.style.display = 'none';
+        ordersSection.style.display = 'block';
+        setStatus('');
+        await loadOrders(accessToken);
+      }
+    }
+
+    init().catch((err) => {
+      console.error(err);
+      setStatus('Something went wrong loading this page.', 'error');
+    });
+  </script>
+</body>
+</html>
