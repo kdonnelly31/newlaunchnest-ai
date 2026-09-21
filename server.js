@@ -731,6 +731,21 @@ app.get('/api/admin/mto/settings', requireAdmin, async (req, res) => {
   res.json({ enabled: data.enabled, cutoverAt: data.cutover_at });
 });
 
+// Surfaces the cron-triggered runs too -- without this, a broken cron secret
+// or an expired Etsy token just looks like an empty orders table.
+app.get('/api/admin/mto/sync-runs', requireAdmin, async (req, res) => {
+  const { data, error } = await supabaseAdmin
+    .from('mto_sync_runs')
+    .select('started_at, finished_at, trigger, receipts_seen, orders_created, orders_updated, error')
+    .order('started_at', { ascending: false })
+    .limit(10);
+  if (error) {
+    console.error(error);
+    return res.status(500).json({ error: error.message });
+  }
+  res.json({ runs: data });
+});
+
 app.post('/api/admin/mto/settings', requireAdmin, async (req, res) => {
   const { enabled, cutoverAt } = req.body ?? {};
   if (typeof enabled !== 'boolean') {
@@ -738,6 +753,12 @@ app.post('/api/admin/mto/settings', requireAdmin, async (req, res) => {
   }
   if (cutoverAt !== null && Number.isNaN(Date.parse(cutoverAt))) {
     return res.status(400).json({ error: '"cutoverAt" must be a valid date/time or null.' });
+  }
+  // Enabled with no cutover would leave the guard in verifyPurchase.js
+  // silently inert (it short-circuits on a falsy cutoverAt) while this
+  // screen shows "Enabled" -- exactly the mis-grant this stage prevents.
+  if (enabled && !cutoverAt) {
+    return res.status(400).json({ error: 'Set a cutover time before enabling made-to-order intake.' });
   }
   const { error } = await supabaseAdmin
     .from('mto_settings')

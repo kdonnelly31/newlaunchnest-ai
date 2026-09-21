@@ -198,6 +198,7 @@
       </div>
       <p class="sync-result" id="settings-result"></p>
       <p class="sync-result" id="sync-result"></p>
+      <p class="sync-result" id="last-sync-info"></p>
     </div>
 
     <div id="orders-section" style="display:none">
@@ -315,6 +316,32 @@
       }
       document.getElementById('enabled-checkbox').checked = Boolean(data.enabled);
       document.getElementById('cutover-input').value = isoToDatetimeLocal(data.cutoverAt);
+    }
+
+    // Shows the most recent sync run, cron-triggered ones included, so a
+    // broken cron secret or an expired Etsy token is visible on page load
+    // rather than looking like an empty orders table.
+    async function loadLastSyncRun(accessToken) {
+      const res = await fetch('/api/admin/mto/sync-runs', {
+        headers: { Authorization: `Bearer ${accessToken}` },
+      });
+      if (!res.ok) return;
+      const { runs } = await res.json();
+      const el = document.getElementById('last-sync-info');
+      if (!el) return;
+      if (!runs || runs.length === 0) {
+        el.textContent = 'No syncs have run yet.';
+        return;
+      }
+      const last = runs[0];
+      const when = last.finished_at ? formatDate(last.finished_at) : 'in progress';
+      const status = last.error
+        ? `error: ${last.error}`
+        : `created ${last.orders_created}, updated ${last.orders_updated}`;
+      // textContent, not innerHTML -- no escaping needed, and escaping here
+      // would render literal &amp;/&lt; sequences to the operator.
+      el.textContent = `Last sync (${last.trigger}): ${when} — ${status}`;
+      el.style.color = last.error ? 'var(--error)' : 'var(--muted)';
     }
 
     async function saveSettings(accessToken) {
@@ -480,13 +507,14 @@
         const snapshotTable = document.getElementById('snapshot-kv-table');
         snapshotTable.innerHTML = '';
         renderKvRow(snapshotTable, 'Title', escapeHtml(snapshot.title) || '—');
-        renderKvRow(
-          snapshotTable,
-          'Price',
-          snapshot.price !== undefined && snapshot.price !== null
-            ? `${escapeHtml(snapshot.price)} ${escapeHtml(snapshot.currency) || ''}`
-            : '—',
-        );
+        // Etsy money is stored raw ({ amount, divisor, currency_code }) per the
+        // plan's "keep raw amount/divisor" constraint, so divide here for
+        // display -- same convention as formatListing() in server.js.
+        const p = snapshot.price;
+        const priceText = p && p.amount != null && p.divisor
+          ? `${(Number(p.amount) / Number(p.divisor)).toFixed(2)} ${escapeHtml(snapshot.currency || p.currency_code || '')}`
+          : '—';
+        renderKvRow(snapshotTable, 'Price', priceText);
         renderKvRow(snapshotTable, 'State', escapeHtml(snapshot.state) || '—');
       } else {
         snapshotPanel.style.display = 'none';
@@ -555,6 +583,7 @@
 
       settingsPanel.style.display = 'block';
       await loadSettings(accessToken);
+      await loadLastSyncRun(accessToken);
 
       if (orderId) {
         ordersSection.style.display = 'none';
