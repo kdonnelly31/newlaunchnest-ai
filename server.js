@@ -667,6 +667,89 @@ app.post('/api/admin/mto/sync-now', requireAdmin, async (req, res) => {
   }
 });
 
+app.get('/api/admin/mto/orders', requireAdmin, async (req, res) => {
+  let query = supabaseAdmin
+    .from('mto_orders')
+    .select('id, receipt_id, transaction_id, buyer_display_name, payment_state, fulfillment_status, needs_attention, attention_reason, receipt_created_at, last_synced_at')
+    .order('receipt_created_at', { ascending: false });
+  if (req.query.needsAttention === 'true') {
+    query = query.eq('needs_attention', true);
+  }
+  const { data, error } = await query;
+  if (error) {
+    console.error(error);
+    return res.status(500).json({ error: error.message });
+  }
+  res.json({ orders: data });
+});
+
+app.get('/api/admin/mto/orders/:id', requireAdmin, async (req, res) => {
+  const { data: order, error } = await supabaseAdmin.from('mto_orders').select('*').eq('id', req.params.id).maybeSingle();
+  if (error) {
+    console.error(error);
+    return res.status(500).json({ error: error.message });
+  }
+  if (!order) return res.status(404).json({ error: 'Order not found.' });
+
+  const { data: answers, error: answersError } = await supabaseAdmin
+    .from('mto_personalization_answers')
+    .select('question_id, formatted_name, formatted_value, mapped_field, mapping_version')
+    .eq('order_id', order.id);
+  if (answersError) {
+    console.error(answersError);
+    return res.status(500).json({ error: answersError.message });
+  }
+
+  const { data: assets, error: assetsError } = await supabaseAdmin
+    .from('mto_assets')
+    .select('id, source_url, storage_key, content_type, byte_size, status, failure_reason')
+    .eq('order_id', order.id);
+  if (assetsError) {
+    console.error(assetsError);
+    return res.status(500).json({ error: assetsError.message });
+  }
+
+  // Short-lived signed URLs -- the bucket is private, and these are the
+  // only way the admin UI can display a thumbnail.
+  const assetsWithUrls = await Promise.all(
+    assets.map(async (asset) => {
+      if (!asset.storage_key) return asset;
+      const { data: signed } = await supabaseAdmin.storage.from('mto-assets').createSignedUrl(asset.storage_key, 300);
+      return { ...asset, signedUrl: signed?.signedUrl ?? null };
+    }),
+  );
+
+  res.json({ order, answers, assets: assetsWithUrls });
+});
+
+app.get('/api/admin/mto/settings', requireAdmin, async (req, res) => {
+  const { data, error } = await supabaseAdmin.from('mto_settings').select('enabled, cutover_at').eq('id', 1).single();
+  if (error) {
+    console.error(error);
+    return res.status(500).json({ error: error.message });
+  }
+  res.json({ enabled: data.enabled, cutoverAt: data.cutover_at });
+});
+
+app.post('/api/admin/mto/settings', requireAdmin, async (req, res) => {
+  const { enabled, cutoverAt } = req.body ?? {};
+  if (typeof enabled !== 'boolean') {
+    return res.status(400).json({ error: '"enabled" must be a boolean.' });
+  }
+  if (cutoverAt !== null && Number.isNaN(Date.parse(cutoverAt))) {
+    return res.status(400).json({ error: '"cutoverAt" must be a valid date/time or null.' });
+  }
+  const { error } = await supabaseAdmin
+    .from('mto_settings')
+    .update({ enabled, cutover_at: cutoverAt, updated_at: new Date().toISOString() })
+    .eq('id', 1);
+  if (error) {
+    console.error(error);
+    return res.status(500).json({ error: error.message });
+  }
+  res.json({ enabled, cutoverAt });
+});
+
 // Vercel Cron always sends GET, and (with CRON_SECRET set as a project env
 // var) automatically attaches `Authorization: Bearer <CRON_SECRET>` -- see
 // https://vercel.com/docs/cron-jobs/manage-cron-jobs#securing-cron-jobs.
