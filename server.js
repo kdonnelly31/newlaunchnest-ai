@@ -22,6 +22,9 @@ import {
 import { evaluateReceipt } from './lib/verifyPurchase.js';
 import { extractAccentColor } from './lib/brandColor.js';
 import { renderLandingPageDocument, renderNotFoundPage } from './lib/landingPageTemplate.js';
+import { createMtoStore } from './lib/mtoStore.js';
+import { syncMadeToOrderReceipts } from './lib/etsySync.js';
+import { importAsset } from './lib/assetImporter.js';
 
 const {
   ETSY_API_KEY, ETSY_SHARED_SECRET, ANTHROPIC_API_KEY, PINTEREST_ACCESS_TOKEN,
@@ -31,6 +34,7 @@ const {
   ETSY_SELLER_SHOP_NAME, ETSY_PRODUCT_LISTING_ID, ETSY_SHOP_NAME_QUESTION_ID,
   ETSY_OAUTH_REDIRECT_URI = 'http://localhost:3000/auth/etsy/callback',
   PORT = 3000,
+  CRON_SECRET,
 } = process.env;
 
 if (!ETSY_API_KEY || !ETSY_SHARED_SECRET) {
@@ -251,6 +255,90 @@ const PAGE_SIZE = 100;
 const CONCURRENCY = 2;
 const MAX_RETRIES = 5;
 const API_KEY_HEADER = `${ETSY_API_KEY}:${ETSY_SHARED_SECRET}`;
+
+const mtoStore = supabaseAdmin ? createMtoStore(supabaseAdmin) : null;
+
+// Fetches one page of the seller's receipts for made-to-order sync. Mirrors
+// the retry-on-429 behavior of etsyFetch(), but this needs query params and
+// an Authorization header, which etsyFetch() doesn't support.
+async function listMtoReceipts({ minCreated, minLastModified, maxLastModified, limit, offset }, attempt = 0) {
+  const etsyToken = await getValidEtsyToken(supabaseAdmin, ETSY_API_KEY);
+  if (!etsyToken) throw new Error('No Etsy seller connection configured.');
+
+  const params = new URLSearchParams({ limit: String(limit), offset: String(offset), sort_on: 'created', sort_order: 'asc' });
+  if (minCreated) params.set('min_created', String(Math.floor(minCreated.getTime() / 1000)));
+  if (minLastModified) params.set('min_last_modified', String(Math.floor(minLastModified.getTime() / 1000)));
+  if (maxLastModified) params.set('max_last_modified', String(Math.floor(maxLastModified.getTime() / 1000)));
+
+  const res = await fetch(`${ETSY_BASE}/shops/${etsyToken.shopId}/receipts?${params}`, {
+    headers: { 'x-api-key': API_KEY_HEADER, Authorization: `Bearer ${etsyToken.accessToken}` },
+  });
+
+  if (res.status === 429 && attempt < MAX_RETRIES) {
+    const retryAfterSec = Number(res.headers.get('retry-after'));
+    const delayMs = Number.isFinite(retryAfterSec) && retryAfterSec > 0 ? retryAfterSec * 1000 : 500 * 2 ** attempt;
+    await sleep(delayMs);
+    return listMtoReceipts({ minCreated, minLastModified, maxLastModified, limit, offset }, attempt + 1);
+  }
+  if (!res.ok) throw new Error(`Etsy API ${res.status}: ${await res.text()}`);
+
+  const body = await res.json();
+  return { receipts: body.results ?? [] };
+}
+
+// Confirms the buyer's pasted product link resolves to a real, active
+// listing -- reuses the existing public etsyFetch() (no OAuth needed for
+// listing reads).
+async function resolveMtoListing(listingId) {
+  try {
+    const listing = await etsyFetch(`/listings/${listingId}`);
+    if (listing.state !== 'active') return null;
+    return { title: listing.title, price: listing.price, currency: listing.price?.currency_code, state: listing.state };
+  } catch {
+    return null;
+  }
+}
+
+// Downloads a buyer-uploaded asset through the restricted importer, then
+// copies the validated bytes into the private mto-assets bucket.
+async function importAndStoreMtoAsset(transactionId, sourceUrl) {
+  const result = await importAsset(sourceUrl);
+  if (!result.ok) return { status: 'failed', failureReason: result.failureReason };
+
+  const extension = (result.contentType.split('/')[1] || 'bin').replace('jpeg', 'jpg');
+  const storageKey = `${transactionId}/${crypto.randomUUID()}.${extension}`;
+  const { error } = await supabaseAdmin.storage.from('mto-assets').upload(storageKey, result.buffer, { contentType: result.contentType });
+  if (error) return { status: 'failed', failureReason: `storage_upload_failed: ${error.message}` };
+
+  return { status: 'downloaded', storageKey, contentType: result.contentType, byteSize: result.byteSize };
+}
+
+async function getMtoSettings() {
+  const { data, error } = await supabaseAdmin.from('mto_settings').select('enabled, cutover_at').eq('id', 1).single();
+  if (error) throw new Error(error.message);
+  return { enabled: data.enabled, cutoverAt: data.cutover_at };
+}
+
+async function runMtoSync(trigger) {
+  if (!mtoStore) throw new Error('Made-to-order intake is not configured on the server.');
+  const settings = await getMtoSettings();
+  if (!settings.enabled || !settings.cutoverAt) {
+    return { skipped: true, reason: 'not_enabled' };
+  }
+  const etsyToken = await getValidEtsyToken(supabaseAdmin, ETSY_API_KEY);
+  if (!etsyToken) throw new Error('No Etsy seller connection configured.');
+
+  return syncMadeToOrderReceipts({
+    listReceipts: listMtoReceipts,
+    resolveListing: resolveMtoListing,
+    importAndStoreAsset: importAndStoreMtoAsset,
+    store: mtoStore,
+    listingId: ETSY_PRODUCT_LISTING_ID,
+    shopId: etsyToken.shopId,
+    cutoverAt: settings.cutoverAt,
+    trigger,
+  });
+}
 
 const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
 
@@ -567,6 +655,32 @@ app.post('/api/admin/profiles/:id/grant-pages', requireAdmin, async (req, res) =
   }
 
   res.json({ profile: { ...profile, pages_used: pagesUsed ?? 0 }, page_allowance: newAllowance });
+});
+
+app.post('/api/admin/mto/sync-now', requireAdmin, async (req, res) => {
+  try {
+    const result = await runMtoSync('manual');
+    res.json(result);
+  } catch (err) {
+    console.error(err);
+    res.status(502).json({ error: err.message });
+  }
+});
+
+// Vercel Cron always sends GET, and (with CRON_SECRET set as a project env
+// var) automatically attaches `Authorization: Bearer <CRON_SECRET>` -- see
+// https://vercel.com/docs/cron-jobs/manage-cron-jobs#securing-cron-jobs.
+app.get('/api/cron/mto-sync', async (req, res) => {
+  if (!CRON_SECRET || req.headers.authorization !== `Bearer ${CRON_SECRET}`) {
+    return res.status(401).json({ error: 'Unauthorized.' });
+  }
+  try {
+    const result = await runMtoSync('cron');
+    res.json(result);
+  } catch (err) {
+    console.error(err);
+    res.status(502).json({ error: err.message });
+  }
 });
 
 app.get('/api/pinterest/boards', requireApproved, async (req, res) => {
