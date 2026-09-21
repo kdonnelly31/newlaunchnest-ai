@@ -957,11 +957,14 @@ app.post('/api/verify-purchase', requireAuth, async (req, res) => {
       }
     }
 
+    const mtoSettings = mtoStore ? await getMtoSettings() : { enabled: false, cutoverAt: null };
     const result = evaluateReceipt({
       receipt,
       listingId: ETSY_PRODUCT_LISTING_ID,
       claimedByOtherUser: !!existingClaim,
       shopNameQuestionId: ETSY_SHOP_NAME_QUESTION_ID,
+      madeToOrderEnabled: mtoSettings.enabled,
+      cutoverAt: mtoSettings.cutoverAt,
     });
     if (!result.ok) {
       return res.status(result.status).json({ error: result.message });
@@ -1060,7 +1063,14 @@ app.post('/api/check-new-purchase', requireApproved, async (req, res) => {
       return res.json({ found: false });
     }
 
-    const result = evaluateReceipt({ receipt: candidate, listingId: ETSY_PRODUCT_LISTING_ID, claimedByOtherUser: false });
+    const mtoSettings = mtoStore ? await getMtoSettings() : { enabled: false, cutoverAt: null };
+    const result = evaluateReceipt({
+      receipt: candidate,
+      listingId: ETSY_PRODUCT_LISTING_ID,
+      claimedByOtherUser: false,
+      madeToOrderEnabled: mtoSettings.enabled,
+      cutoverAt: mtoSettings.cutoverAt,
+    });
     if (!result.ok) {
       // Not paid, canceled, refunded, etc. -- nothing to grant yet.
       return res.json({ found: false });
