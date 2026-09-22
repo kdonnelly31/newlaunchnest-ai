@@ -25,6 +25,8 @@ import { renderLandingPageDocument, renderNotFoundPage } from './lib/landingPage
 import { createMtoStore } from './lib/mtoStore.js';
 import { syncMadeToOrderReceipts } from './lib/etsySync.js';
 import { importAsset } from './lib/assetImporter.js';
+import { generatePageStory } from './lib/pageStoryGenerator.js';
+import { SOCIAL_PLATFORMS } from './lib/pageStorySchema.js';
 
 const {
   ETSY_API_KEY, ETSY_SHARED_SECRET, ANTHROPIC_API_KEY, PINTEREST_ACCESS_TOKEN,
@@ -446,69 +448,6 @@ function formatListing(listing, imagesByListingId) {
     image: imagesByListingId.get(listing.listing_id) ?? null,
     tags: listing.tags ?? [],
   };
-}
-
-const SOCIAL_PLATFORMS = ['instagram', 'facebook', 'pinterest'];
-
-const PLATFORM_GUIDANCE = {
-  facebook: 'Facebook: a warm, conversational caption (2-4 sentences), like a small-shop owner talking to regulars. 0-3 hashtags at most. No title.',
-  instagram: 'Instagram: an inviting caption (roughly 60-120 words) with a bit of storytelling, ending on a soft call-to-action. 8-12 relevant hashtags. No title.',
-  pinterest: 'Pinterest: a keyword-rich, benefit-led title (under 100 characters) plus a descriptive caption (2-3 sentences) written to surface in search. 3-6 hashtags.',
-};
-
-const SocialPostSchema = z.object({
-  platform: z.enum(SOCIAL_PLATFORMS),
-  title: z.string().nullable().describe('Only for Pinterest: a keyword-rich pin title under 100 characters. Null for every other platform.'),
-  caption: z.string().describe('The main post text, written in the voice, length, and norms of the target platform'),
-  hashtags: z.array(z.string()).max(12).describe('Hashtags without the # symbol'),
-});
-
-const LandingCopySchema = z.object({
-  eyebrow: z.string().describe('Short all-caps-style tag line, 2-5 words, e.g. "HANDCRAFTED · LIMITED RUN"'),
-  headline: z.string().describe('A punchy, distinctive product headline — not just the raw listing title'),
-  subheadline: z.string().describe('One enthusiastic sentence expanding on the headline'),
-  story: z.array(z.string()).min(2).max(4).describe('2-4 short paragraphs rewriting the description with enthusiasm and specificity'),
-  highlights: z.array(z.string()).min(3).max(5).describe('3-5 short, punchy benefit phrases (not full sentences)'),
-  cta: z.string().describe('Call-to-action button label, e.g. "Get Yours on Etsy"'),
-  socialPosts: z.array(SocialPostSchema).min(1).max(SOCIAL_PLATFORMS.length)
-    .describe('One entry per requested platform, in the same order they were requested'),
-});
-
-async function generateLandingCopy(listing, platforms) {
-  const platformInstructions = platforms.map(p => `- ${PLATFORM_GUIDANCE[p]}`).join('\n');
-
-  const response = await anthropic.messages.parse({
-    model: 'claude-opus-5',
-    max_tokens: 8000,
-    thinking: { type: 'adaptive' },
-    output_config: { effort: 'high', format: zodOutputFormat(LandingCopySchema) },
-    system:
-      'You are a copywriter for a boutique e-commerce landing page builder. ' +
-      'Write enthusiastic, specific, tasteful marketing copy for the given handmade/vintage Etsy product. ' +
-      'Sound like a confident independent brand, not a hype-filled ad. No emojis. No exclamation-point spam (at most one, if any). ' +
-      'Never invent facts, materials, dimensions, or claims not present in the listing data — you may rephrase and elevate what is given, but do not fabricate details. ' +
-      `Also draft one social media post per platform below — write distinct copy per platform, not the same text reused:\n${platformInstructions}\n` +
-      `socialPosts must contain exactly ${platforms.length} entr${platforms.length === 1 ? 'y' : 'ies'}, one per platform listed above, each with its "platform" field set exactly to that platform's name.`,
-    messages: [
-      {
-        role: 'user',
-        content: JSON.stringify({
-          title: listing.title,
-          description: listing.description,
-          price: listing.price,
-          currency: listing.currency,
-          tags: listing.tags,
-          materials: listing.materials,
-          shopName: listing.shopName,
-        }),
-      },
-    ],
-  });
-
-  if (!response.parsed_output) {
-    throw new Error('Claude did not return parseable landing page copy.');
-  }
-  return response.parsed_output;
 }
 
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 200 * 1024 * 1024 } });
@@ -1317,7 +1256,8 @@ app.post('/api/landing-pages', requireApproved, async (req, res) => {
   if (!assertShopAllowed(req, res, listing.shop?.shop_name || '')) return;
 
   try {
-    const copy = await generateLandingCopy(
+    const pagePlan = await generatePageStory(
+      anthropic,
       {
         title: listing.title,
         description: listing.description,
@@ -1326,6 +1266,7 @@ app.post('/api/landing-pages', requireApproved, async (req, res) => {
         tags: listing.tags,
         materials: listing.materials,
         shopName: listing.shop?.shop_name,
+        images: listing.images,
       },
       SOCIAL_PLATFORMS,
     );
@@ -1347,7 +1288,7 @@ app.post('/api/landing-pages', requireApproved, async (req, res) => {
       }
     }
 
-    const content = { listing, copy, price, colors };
+    const content = { schemaVersion: 2, listing, price, colors, pagePlan };
 
     // Insert as the caller, not the service role: the "Users can insert landing
     // pages within their allowance" RLS policy is the real paywall enforcement
@@ -1368,7 +1309,7 @@ app.post('/api/landing-pages', requireApproved, async (req, res) => {
       return res.status(500).json({ error: insertError.message });
     }
 
-    res.json({ id: row.id, url: `/p/${row.id}`, copy });
+    res.json({ id: row.id, url: `/p/${row.id}` });
   } catch (err) {
     console.error(err);
     if (err instanceof Anthropic.AuthenticationError) {
