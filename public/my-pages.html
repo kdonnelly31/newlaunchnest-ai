@@ -266,16 +266,43 @@
       return div.innerHTML.replace(/"/g, '&quot;').replace(/'/g, '&#39;');
     }
 
+    // Normalizes either stored content shape -- today's flat `copy`, or the
+    // sectioned `pagePlan` from the conversion-story engine -- down to what
+    // this page needs, so renderCard/renderSharePanel stay free of
+    // schemaVersion branching. Returns null if the row has neither (e.g. a
+    // pre-copy-feature legacy row, matching the existing `if (!copy)` guard's
+    // original intent).
+    function normalizePageContent(content) {
+      if (content.copy) {
+        const heroImage = content.listing?.images?.[0];
+        return {
+          title: content.copy.headline,
+          cardImageUrl: heroImage?.url_570xN || heroImage?.url_fullxfull || '',
+          shareImageUrl: heroImage?.url_fullxfull || heroImage?.url_570xN || '',
+          socialPostsSource: content.copy,
+        };
+      }
+      if (content.pagePlan) {
+        const hero = content.pagePlan.sections.find(s => s.type === 'hero');
+        const heroImage = content.pagePlan.images.find(img => img.id === hero?.imageId);
+        return {
+          title: hero?.headline,
+          cardImageUrl: heroImage?.thumbnailUrl || heroImage?.url || '',
+          shareImageUrl: heroImage?.url || '',
+          socialPostsSource: { socialPosts: content.pagePlan.socialPosts, headline: hero?.headline, subheadline: hero?.subheadline },
+        };
+      }
+      return null;
+    }
+
     function renderSharePanel(row) {
-      const { listing, copy } = row.content;
-      // No sharable copy (e.g. a row saved before captions existed) -- render
-      // nothing rather than let getSocialPost's `copy.socialPosts` access throw
-      // on a null/undefined `copy` and break rendering of every card.
-      if (!copy) return '';
+      const normalized = normalizePageContent(row.content);
+      // No sharable content (e.g. a row saved before captions existed) --
+      // render nothing rather than let getSocialPost throw on a
+      // null/undefined source and break rendering of every card.
+      if (!normalized) return '';
       const pageUrl = new URL(`/p/${row.id}`, window.location.origin).href;
-      // Prefer the full-resolution image for sharing (vs. renderCard's 570xN
-      // thumbnail below) since social platforms display it much larger.
-      const imageUrl = listing?.images?.[0]?.url_fullxfull || listing?.images?.[0]?.url_570xN || '';
+      const imageUrl = normalized.shareImageUrl;
 
       const platforms = [
         { key: 'pinterest', label: 'Pinterest' },
@@ -286,7 +313,7 @@
       return `
         <div class="share-panel" hidden>
           ${platforms.map(({ key, label }) => {
-            const post = getSocialPost(copy, key);
+            const post = getSocialPost(normalized.socialPostsSource, key);
             const caption = formatCaptionForCopy(post);
             let actionsHtml = `<button type="button" class="copy-caption-btn" data-platform="${key}">Copy caption</button>`;
             let hint = '';
@@ -332,9 +359,9 @@
         `;
       }
 
-      const { listing, copy } = row.content;
-      const title = copy?.headline || listing?.title || 'Untitled page';
-      const image = listing?.images?.[0]?.url_570xN || listing?.images?.[0]?.url_fullxfull || '';
+      const normalized = normalizePageContent(row.content);
+      const title = normalized?.title || row.content.listing?.title || 'Untitled page';
+      const image = normalized?.cardImageUrl || '';
       const url = `/p/${row.id}`;
 
       return `
@@ -346,10 +373,10 @@
           </div>
           <div class="actions">
             <button type="button" class="copy-btn" data-url="${escapeHtml(url)}">Copy link</button>
-            ${copy ? '<button type="button" class="share-toggle-btn">Share</button>' : ''}
+            ${normalized ? '<button type="button" class="share-toggle-btn">Share</button>' : ''}
             <a class="primary" href="${escapeHtml(url)}" target="_blank" rel="noopener noreferrer">View page →</a>
           </div>
-          ${copy ? renderSharePanel(row) : ''}
+          ${normalized ? renderSharePanel(row) : ''}
         </div>
       `;
     }
