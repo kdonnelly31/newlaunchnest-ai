@@ -6,8 +6,6 @@ import { fileURLToPath } from 'url';
 import express from 'express';
 import multer from 'multer';
 import Anthropic from '@anthropic-ai/sdk';
-import { z } from 'zod';
-import { zodOutputFormat } from '@anthropic-ai/sdk/helpers/zod';
 import { createClient } from '@supabase/supabase-js';
 import crypto from 'crypto';
 import {
