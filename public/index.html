@@ -252,7 +252,7 @@
 <body>
   <div style="position:fixed; top:1rem; right:1.25rem; display:flex; align-items:center; gap:1rem; font-size:.85rem; max-width:calc(100vw - 2.5rem); flex-wrap:wrap; justify-content:flex-end;">
     <span id="pages-remaining" style="display:none; color:var(--muted);"></span>
-    <a id="my-pages-link" href="/my-pages.html" style="display:none; color:var(--muted); text-decoration:none;">My Landing Pages</a>
+    <a id="my-pages-link" href="/my-pages.html" style="display:none; color:var(--muted); text-decoration:none;">Manage My Landing Pages</a>
     <a id="admin-link" href="/admin.html" style="display:none; color:var(--muted); text-decoration:none;">Admin</a>
     <a id="logout-link" href="#" style="display:none; color:var(--muted); text-decoration:none;">Log out</a>
   </div>
@@ -631,7 +631,7 @@
         return;
       }
       if (!allowance?.[0]?.allowed) {
-        status.textContent = "Page limit reached — purchase again for 3 more.";
+        status.innerHTML = 'Page limit reached — purchase again for 3 more. <a href="/my-pages.html" style="color:var(--accent);">Go to Manage My Landing Pages</a>';
         return;
       }
 
