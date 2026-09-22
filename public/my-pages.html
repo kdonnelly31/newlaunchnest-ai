@@ -235,7 +235,7 @@
     <p>Every landing page you've created, with links you can share or revisit anytime.</p>
   </header>
 
-  <a class="back-link" href="/index.html">← Back to shop search</a>
+  <a class="back-link" id="back-to-shop-link" href="/index.html">← Back to shop search</a>
 
   <div class="buy-more-panel" id="buy-more-panel" style="display:none;">
     <p>Out of pages? <a class="etsy-link" id="buy-more-etsy-link" target="_blank" rel="noopener noreferrer">Buy the listing again on Etsy →</a> — come back to this tab afterward and we'll pick up your new purchase automatically.</p>
@@ -430,6 +430,7 @@
           etsyLink.href =
             'https://www.etsy.com/listing/4569723339/ai-landing-page-marketing-template-pdf?sr_prefetch=1&pf_from=shop_home&ref=shop_home_active_1&crt=1&dd=1&logging_key=10c1966872ff786b8a8d6a6cd14e3e1b65771cfa%3A4569723339';
           document.getElementById('buy-more-panel').style.display = 'block';
+          document.getElementById('back-to-shop-link').style.display = 'none';
 
           // Automatic path: once they've clicked through to Etsy, check for a
           // matching new purchase every time this tab regains focus (covers
