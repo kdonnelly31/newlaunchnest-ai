@@ -352,7 +352,11 @@
   <div class="buy-more-panel" id="buy-more-panel" style="display:none;">
     <p>Want more landing pages? <a class="etsy-link" id="buy-more-etsy-link" target="_blank" rel="noopener noreferrer">Buy the listing again on Etsy →</a> — come back to this tab afterward and we'll pick up your new purchase automatically.</p>
     <p id="auto-check-status"></p>
-    <details id="buy-more-manual">
+    <!-- Hidden: auto-detection (the focus-triggered check above, and the
+         one on Find My Shop's page load) is expected to catch repurchases
+         on its own now, so this manual fallback shouldn't be needed. Left
+         in place (not deleted) in case that assumption turns out wrong. -->
+    <details id="buy-more-manual" style="display:none;">
       <summary>Already have your order number?</summary>
       <form class="buy-more-form" id="buy-more-form">
         <input id="buy-more-receipt-input" type="text" inputmode="numeric" placeholder="New Etsy order number" autocomplete="off" required />
