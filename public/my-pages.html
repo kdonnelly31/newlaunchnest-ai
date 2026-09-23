@@ -34,12 +34,8 @@
   }
   #status.error { color: var(--error); }
   .back-link {
-    position: fixed;
-    top: 1rem;
-    left: 1.25rem;
     color: var(--accent);
     text-decoration: none;
-    font-size: .85rem;
   }
   .buy-more-panel {
     max-width: 420px;
@@ -340,14 +336,15 @@
 </style>
 </head>
 <body>
-  <a id="logout-link" href="#" style="display:none; position:fixed; top:1rem; right:1.25rem; font-size:.85rem; color:var(--muted); text-decoration:none;">Log out</a>
+  <div style="position:fixed; top:1rem; right:1.25rem; display:flex; align-items:center; gap:1rem; font-size:.85rem; max-width:calc(100vw - 2.5rem); flex-wrap:wrap; justify-content:flex-end;">
+    <a class="back-link" id="back-to-shop-link" href="/index.html">← Back</a>
+    <a id="logout-link" href="#" style="display:none; color:var(--muted); text-decoration:none;">Log out</a>
+  </div>
 
   <header>
     <h1>Manage My Landing Pages</h1>
     <p>Every landing page you've created, with links you can share or revisit anytime.</p>
   </header>
-
-  <a class="back-link" id="back-to-shop-link" href="/index.html">← Back</a>
 
   <div class="buy-more-panel" id="buy-more-panel" style="display:none;">
     <p>Want more landing pages? <a class="etsy-link" id="buy-more-etsy-link" target="_blank" rel="noopener noreferrer">Buy the listing again on Etsy →</a> — come back to this tab afterward and we'll pick up your new purchase automatically.</p>
