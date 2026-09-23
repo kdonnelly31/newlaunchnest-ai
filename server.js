@@ -25,6 +25,7 @@ import { syncMadeToOrderReceipts } from './lib/etsySync.js';
 import { importAsset } from './lib/assetImporter.js';
 import { generatePageStory } from './lib/pageStoryGenerator.js';
 import { SOCIAL_PLATFORMS } from './lib/pageStorySchema.js';
+import { applyTextEdits } from './lib/pageTextEdits.js';
 
 const {
   ETSY_API_KEY, ETSY_SHARED_SECRET, ANTHROPIC_API_KEY, PINTEREST_ACCESS_TOKEN,
@@ -1318,6 +1319,60 @@ app.post('/api/landing-pages', requireApproved, async (req, res) => {
     }
     res.status(502).json({ error: err.message });
   }
+});
+
+// Lets a buyer fix typos in a page they already generated. Deliberately
+// narrow: applyTextEdits only merges wording, and hard-rejects any attempt
+// to change section count/order/type or image placement -- the AI's actual
+// composition decisions stay locked, only the text can change. Both the
+// read and the write run as the caller (not the service role), so the new
+// "Users can update their own landing pages" RLS policy is the real
+// ownership boundary here, matching how page creation already relies on
+// RLS rather than an app-layer check.
+app.patch('/api/landing-pages/:id', requireApproved, async (req, res) => {
+  const { sections } = req.body ?? {};
+  if (!Array.isArray(sections)) {
+    return res.status(400).json({ error: 'Missing sections.' });
+  }
+
+  const supabaseAsUser = createClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
+    auth: { persistSession: false },
+    global: { headers: { Authorization: req.headers.authorization } },
+  });
+
+  const { data: row, error: fetchError } = await supabaseAsUser
+    .from('landing_pages')
+    .select('content')
+    .eq('id', req.params.id)
+    .maybeSingle();
+  if (fetchError) {
+    console.error(fetchError);
+    return res.status(500).json({ error: fetchError.message });
+  }
+  if (!row) {
+    return res.status(404).json({ error: 'Landing page not found.' });
+  }
+  if (!row.content?.pagePlan) {
+    return res.status(422).json({ error: 'This page was created before text editing was supported and cannot be edited.' });
+  }
+
+  let updatedPagePlan;
+  try {
+    updatedPagePlan = applyTextEdits(row.content.pagePlan, sections);
+  } catch (err) {
+    return res.status(400).json({ error: err.message });
+  }
+
+  const { error: updateError } = await supabaseAsUser
+    .from('landing_pages')
+    .update({ content: { ...row.content, pagePlan: updatedPagePlan } })
+    .eq('id', req.params.id);
+  if (updateError) {
+    console.error(updateError);
+    return res.status(500).json({ error: updateError.message });
+  }
+
+  res.json({ ok: true });
 });
 
 app.get('/p/:id', async (req, res) => {

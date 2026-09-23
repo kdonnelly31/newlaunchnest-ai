@@ -225,6 +225,83 @@
     color: var(--ink);
     font-family: inherit;
   }
+  .edit-panel {
+    flex: 1 1 100%;
+    margin-top: .75rem;
+    padding-top: .75rem;
+    border-top: 1px solid var(--border);
+    display: grid;
+    gap: 1rem;
+  }
+  .edit-panel[hidden] {
+    display: none;
+  }
+  .edit-section {
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: .75rem .9rem;
+    display: grid;
+    gap: .6rem;
+  }
+  .edit-section legend {
+    padding: 0 .3rem;
+    font-size: .8rem;
+    text-transform: capitalize;
+    color: var(--muted);
+  }
+  .edit-section label {
+    display: block;
+    font-size: .78rem;
+    color: var(--muted);
+  }
+  .edit-section input,
+  .edit-section textarea {
+    width: 100%;
+    margin-top: .25rem;
+    padding: .5rem .6rem;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    font-family: inherit;
+    font-size: .85rem;
+    box-sizing: border-box;
+  }
+  .edit-section textarea {
+    min-height: 3.5rem;
+    resize: vertical;
+  }
+  .edit-item {
+    border-top: 1px dashed var(--border);
+    padding-top: .5rem;
+  }
+  .edit-item:first-child {
+    border-top: none;
+    padding-top: 0;
+  }
+  .edit-actions {
+    display: flex;
+    gap: .5rem;
+    align-items: center;
+  }
+  .edit-actions button {
+    padding: .45rem .9rem;
+    border-radius: 6px;
+    font-size: .85rem;
+    cursor: pointer;
+    border: 1px solid var(--border);
+    background: white;
+    color: var(--ink);
+    font-family: inherit;
+  }
+  .edit-actions button[type="submit"] {
+    background: var(--accent);
+    color: white;
+    border-color: var(--accent);
+  }
+  .edit-message {
+    margin: 0;
+    font-size: .8rem;
+    color: var(--muted);
+  }
 </style>
 </head>
 <body>
@@ -343,6 +420,93 @@
       `;
     }
 
+    // Labels for the buyer-editable text fields (lib/pageTextEdits.js's
+    // TEXT_FIELDS / ITEM_TEXT_FIELDS) -- structural fields (type, imageId)
+    // are never rendered as inputs here, so there's nothing for a buyer to
+    // even attempt to change on that front.
+    const FIELD_LABELS = {
+      eyebrow: 'Eyebrow tag',
+      headline: 'Headline',
+      subheadline: 'Subheadline',
+      ctaText: 'Button text',
+      supportingText: 'Supporting text',
+    };
+    const ARRAY_FIELD_LABELS = {
+      body: 'Paragraph',
+      trustIndicators: 'Trust point',
+      supportingFacts: 'Supporting fact',
+      occasions: 'Occasion',
+    };
+    const ITEM_FIELD_LABELS = {
+      heading: 'Heading',
+      body: 'Description',
+      caption: 'Caption',
+      label: 'Label',
+      value: 'Value',
+    };
+
+    function renderEditPanel(row) {
+      const sectionsHtml = row.content.pagePlan.sections.map((section, i) => {
+        const fields = [];
+
+        for (const field of Object.keys(FIELD_LABELS)) {
+          if (typeof section[field] === 'string') {
+            fields.push(`
+              <label>${FIELD_LABELS[field]}
+                <input type="text" data-section="${i}" data-field="${field}" value="${escapeHtml(section[field])}" />
+              </label>
+            `);
+          }
+        }
+
+        for (const field of Object.keys(ARRAY_FIELD_LABELS)) {
+          const arr = section[field];
+          if (Array.isArray(arr) && arr.length) {
+            arr.forEach((value, k) => {
+              fields.push(`
+                <label>${ARRAY_FIELD_LABELS[field]}${arr.length > 1 ? ` ${k + 1}` : ''}
+                  <textarea data-section="${i}" data-field="${field}" data-index="${k}">${escapeHtml(value)}</textarea>
+                </label>
+              `);
+            });
+          }
+        }
+
+        if (Array.isArray(section.items) && section.items.length) {
+          section.items.forEach((item, j) => {
+            const itemFields = Object.keys(ITEM_FIELD_LABELS)
+              .filter(field => typeof item[field] === 'string')
+              .map(field => `
+                <label>${ITEM_FIELD_LABELS[field]}
+                  <input type="text" data-section="${i}" data-item="${j}" data-field="${field}" value="${escapeHtml(item[field])}" />
+                </label>
+              `).join('');
+            if (itemFields) {
+              fields.push(`<div class="edit-item">${itemFields}</div>`);
+            }
+          });
+        }
+
+        return `
+          <fieldset class="edit-section">
+            <legend>${escapeHtml(section.type.replace(/_/g, ' '))}</legend>
+            ${fields.join('') || '<p class="edit-message">Nothing editable in this section.</p>'}
+          </fieldset>
+        `;
+      }).join('');
+
+      return `
+        <form class="edit-panel" hidden data-page-id="${row.id}">
+          ${sectionsHtml}
+          <div class="edit-actions">
+            <button type="submit">Save changes</button>
+            <button type="button" class="edit-cancel-btn">Cancel</button>
+            <p class="edit-message"></p>
+          </div>
+        </form>
+      `;
+    }
+
     function renderCard(row) {
       const created = new Date(row.created_at).toLocaleDateString(undefined, {
         year: 'numeric', month: 'short', day: 'numeric',
@@ -374,9 +538,11 @@
           <div class="actions">
             <button type="button" class="copy-btn" data-url="${escapeHtml(url)}">Copy link</button>
             ${normalized ? '<button type="button" class="share-toggle-btn">Share</button>' : ''}
+            ${row.content.pagePlan ? '<button type="button" class="edit-toggle-btn">Edit text</button>' : ''}
             <a class="primary" href="${escapeHtml(url)}" target="_blank" rel="noopener noreferrer">View page →</a>
           </div>
           ${normalized ? renderSharePanel(row) : ''}
+          ${row.content.pagePlan ? renderEditPanel(row) : ''}
         </div>
       `;
     }
@@ -605,6 +771,78 @@
             alert('Please allow pop-ups for this site to open the share dialog.');
           }
           return;
+        }
+
+        const editToggleBtn = e.target.closest('.edit-toggle-btn');
+        if (editToggleBtn) {
+          const panel = editToggleBtn.closest('.page-card').querySelector('.edit-panel');
+          panel.hidden = !panel.hidden;
+          return;
+        }
+
+        const editCancelBtn = e.target.closest('.edit-cancel-btn');
+        if (editCancelBtn) {
+          editCancelBtn.closest('.edit-panel').hidden = true;
+          return;
+        }
+      });
+
+      // "submit" bubbles, so one listener on the grid covers every card's
+      // edit form -- no per-card listener needed as cards get re-rendered.
+      grid.addEventListener('submit', async (e) => {
+        const form = e.target.closest('.edit-panel');
+        if (!form) return;
+        e.preventDefault();
+
+        const row = rows.find(r => r.id === form.dataset.pageId);
+        const sections = structuredClone(row.content.pagePlan.sections);
+        form.querySelectorAll('[data-section]').forEach(input => {
+          const section = sections[Number(input.dataset.section)];
+          const target = input.dataset.item !== undefined
+            ? section.items[Number(input.dataset.item)]
+            : input.dataset.index !== undefined
+              ? section[input.dataset.field]
+              : section;
+          if (input.dataset.index !== undefined) {
+            target[Number(input.dataset.index)] = input.value;
+          } else {
+            target[input.dataset.field] = input.value;
+          }
+        });
+
+        const submitBtn = form.querySelector('button[type="submit"]');
+        const messageEl = form.querySelector('.edit-message');
+        submitBtn.disabled = true;
+        messageEl.textContent = 'Saving…';
+
+        try {
+          const { data: { session: freshSession } } = await supabase.auth.getSession();
+          if (!freshSession) {
+            messageEl.textContent = 'Your session expired — please log in again.';
+            submitBtn.disabled = false;
+            return;
+          }
+          const res = await fetch(`/api/landing-pages/${form.dataset.pageId}`, {
+            method: 'PATCH',
+            headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${freshSession.access_token}` },
+            body: JSON.stringify({ sections }),
+          });
+          const data = await res.json();
+          if (!res.ok) {
+            messageEl.textContent = data.error || 'Failed to save changes.';
+            submitBtn.disabled = false;
+            return;
+          }
+          row.content.pagePlan.sections = sections;
+          messageEl.textContent = 'Saved!';
+          setTimeout(() => {
+            form.hidden = true;
+            messageEl.textContent = '';
+            submitBtn.disabled = false;
+          }, 1000);
+        } catch (err) {
+          messageEl.textContent = 'Failed to reach the server: ' + err.message;
+          submitBtn.disabled = false;
         }
       });
     }
