@@ -302,6 +302,41 @@
     font-size: .8rem;
     color: var(--muted);
   }
+  .delete-confirm {
+    flex: 1 1 100%;
+    margin-top: .75rem;
+    padding: .75rem .9rem;
+    border: 1px solid #d9534f;
+    border-radius: 8px;
+    background: #fdf3f2;
+  }
+  .delete-confirm[hidden] {
+    display: none;
+  }
+  .delete-confirm p {
+    margin: 0 0 .6rem;
+    font-size: .85rem;
+    color: var(--ink);
+  }
+  .delete-confirm-actions {
+    display: flex;
+    gap: .5rem;
+  }
+  .delete-confirm-actions button {
+    padding: .45rem .9rem;
+    border-radius: 6px;
+    font-size: .85rem;
+    cursor: pointer;
+    border: 1px solid var(--border);
+    background: white;
+    color: var(--ink);
+    font-family: inherit;
+  }
+  .delete-confirm-btn {
+    background: #d9534f !important;
+    color: white !important;
+    border-color: #d9534f !important;
+  }
 </style>
 </head>
 <body>
@@ -507,6 +542,18 @@
       `;
     }
 
+    function renderDeleteConfirm(pageId) {
+      return `
+        <div class="delete-confirm" hidden data-page-id="${pageId}">
+          <p>Delete this page? The link will stop working and this can't be undone.</p>
+          <div class="delete-confirm-actions">
+            <button type="button" class="delete-confirm-btn">Yes, delete it</button>
+            <button type="button" class="delete-cancel-btn">Cancel</button>
+          </div>
+        </div>
+      `;
+    }
+
     function renderCard(row) {
       const created = new Date(row.created_at).toLocaleDateString(undefined, {
         year: 'numeric', month: 'short', day: 'numeric',
@@ -519,6 +566,10 @@
               <h3>Early test page — no link available</h3>
               <div class="date">Created ${created}</div>
             </div>
+            <div class="actions">
+              <button type="button" class="delete-toggle-btn" data-page-id="${row.id}">Delete</button>
+            </div>
+            ${renderDeleteConfirm(row.id)}
           </div>
         `;
       }
@@ -539,10 +590,12 @@
             <button type="button" class="copy-btn" data-url="${escapeHtml(url)}">Copy link</button>
             ${normalized ? '<button type="button" class="share-toggle-btn">Share</button>' : ''}
             ${row.content.pagePlan ? '<button type="button" class="edit-toggle-btn">Edit text</button>' : ''}
+            <button type="button" class="delete-toggle-btn" data-page-id="${row.id}">Delete</button>
             <a class="primary" href="${escapeHtml(url)}" target="_blank" rel="noopener noreferrer">View page →</a>
           </div>
           ${normalized ? renderSharePanel(row) : ''}
           ${row.content.pagePlan ? renderEditPanel(row) : ''}
+          ${renderDeleteConfirm(row.id)}
         </div>
       `;
     }
@@ -783,6 +836,49 @@
         const editCancelBtn = e.target.closest('.edit-cancel-btn');
         if (editCancelBtn) {
           editCancelBtn.closest('.edit-panel').hidden = true;
+          return;
+        }
+
+        const deleteToggleBtn = e.target.closest('.delete-toggle-btn');
+        if (deleteToggleBtn) {
+          const panel = deleteToggleBtn.closest('.page-card').querySelector('.delete-confirm');
+          panel.hidden = !panel.hidden;
+          return;
+        }
+
+        const deleteCancelBtn = e.target.closest('.delete-cancel-btn');
+        if (deleteCancelBtn) {
+          deleteCancelBtn.closest('.delete-confirm').hidden = true;
+          return;
+        }
+
+        const deleteConfirmBtn = e.target.closest('.delete-confirm-btn');
+        if (deleteConfirmBtn) {
+          const panel = deleteConfirmBtn.closest('.delete-confirm');
+          const pageId = panel.dataset.pageId;
+          const card = panel.closest('.page-card');
+          deleteConfirmBtn.disabled = true;
+          deleteConfirmBtn.textContent = 'Deleting…';
+
+          // RLS ("Users can delete their own landing pages") restricts this
+          // to the caller's own rows, same as the initial read above -- no
+          // server endpoint needed for a delete this simple.
+          const { error } = await supabase.from('landing_pages').delete().eq('id', pageId);
+          if (error) {
+            deleteConfirmBtn.disabled = false;
+            deleteConfirmBtn.textContent = 'Yes, delete it';
+            panel.querySelector('p').textContent = 'Could not delete this page: ' + error.message;
+            return;
+          }
+
+          rows.splice(rows.findIndex(r => r.id === pageId), 1);
+          card.remove();
+          if (!rows.length) {
+            grid.style.display = 'none';
+            status.style.display = '';
+            status.className = '';
+            status.textContent = "You haven't created any landing pages yet.";
+          }
           return;
         }
       });
