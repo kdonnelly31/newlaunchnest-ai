@@ -250,8 +250,6 @@
 </style>
 </head>
 <body>
-  <span id="pages-remaining" style="display:none; position:fixed; top:1rem; left:1.25rem; font-size:.85rem; color:var(--muted);"></span>
-
   <div style="position:fixed; top:1rem; right:1.25rem; display:flex; align-items:center; gap:1rem; font-size:.85rem; max-width:calc(100vw - 2.5rem); flex-wrap:wrap; justify-content:flex-end;">
     <a id="my-pages-link" href="/my-pages.html" style="display:none; color:var(--muted); text-decoration:none;">Manage My Landing Pages</a>
     <a id="admin-link" href="/admin.html" style="display:none; color:var(--muted); text-decoration:none;">Admin</a>
@@ -457,6 +455,8 @@
       }
     }
   </script>
+
+  <p id="pages-remaining" style="display:none; text-align:center; font-size:.85rem; color:var(--muted); margin:0;"></p>
 
   <div class="search-bar">
     <input id="shop-input" type="text" placeholder="e.g. YarnCraftCo" />
