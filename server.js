@@ -1012,39 +1012,29 @@ app.post('/api/verify-purchase', requireAuth, async (req, res) => {
       return res.status(result.status).json({ error: result.message });
     }
 
-    // Recorded before updating the profile so a crash partway through can't
-    // leave this receipt usable a second time.
-    const { error: claimInsertError } = await supabaseAdmin
-      .from('claimed_etsy_receipts')
-      .insert({ receipt_id: receiptId, user_id: req.user.id });
-    if (claimInsertError) {
-      if (claimInsertError.code === '23505') {
+    // Claims the receipt, updates the profile, and (for a repurchase) grants
+    // +3 pages all in one atomic call -- record_verified_purchase does all
+    // three writes in a single transaction, so a failure partway through
+    // can't leave the receipt claimed with no pages granted (the earlier,
+    // multi-step version of this could -- see 20260925000000_atomic_purchase_recording.sql).
+    const { error: recordError } = await supabaseAdmin.rpc('record_verified_purchase', {
+      p_user_id: req.user.id,
+      p_receipt_id: receiptId,
+      p_approve: !isRepurchase,
+      p_grant_amount: isRepurchase ? 3 : 0,
+      // Falls back to the existing manual admin field when the buyer's
+      // answer to the "Your Etsy Shop Name" personalization question is
+      // missing (e.g. an older order placed before that question existed).
+      p_shop_name: result.shopName ?? null,
+      // Lets a future repurchase be auto-detected instead of asking the
+      // buyer to retype another order number -- see /api/check-new-purchase.
+      p_buyer_user_id: result.buyerUserId ?? null,
+    });
+    if (recordError) {
+      if (recordError.code === '23505') {
         return res.status(409).json({ error: 'This order number has already been used to activate another account.' });
       }
-      throw new Error(claimInsertError.message);
-    }
-
-    const { error: updateError } = await supabaseAdmin
-      .from('profiles')
-      .update({
-        ...(isRepurchase ? {} : { status: 'approved' }),
-        etsy_receipt_id: receiptId,
-        purchase_verified_at: new Date().toISOString(),
-        // Falls back to the existing manual admin field when the buyer's
-        // answer to the "Your Etsy Shop Name" personalization question is
-        // missing (e.g. an older order placed before that question existed).
-        ...(result.shopName ? { etsy_shop_name: result.shopName } : {}),
-        // Lets a future repurchase be auto-detected instead of asking the
-        // buyer to retype another order number -- see /api/check-new-purchase.
-        ...(result.buyerUserId ? { etsy_buyer_user_id: result.buyerUserId } : {}),
-      })
-      .eq('id', req.user.id);
-    if (updateError) throw new Error(updateError.message);
-
-    if (isRepurchase) {
-      const { error: grantError } = await supabaseAdmin
-        .rpc('grant_additional_pages', { p_email: req.profile.email, p_amount: 3 });
-      if (grantError) throw new Error(grantError.message);
+      throw new Error(recordError.message);
     }
 
     res.json({ approved: true });
@@ -1129,27 +1119,23 @@ app.post('/api/check-new-purchase', requireApproved, async (req, res) => {
       return res.json({ found: false });
     }
 
-    const { error: claimInsertError } = await supabaseAdmin
-      .from('claimed_etsy_receipts')
-      .insert({ receipt_id: receiptId, user_id: req.user.id });
-    if (claimInsertError) {
+    // See the matching call in /api/verify-purchase -- one atomic write
+    // instead of separate claim/update/grant steps, so a failure partway
+    // through can't leave the receipt claimed with no pages granted.
+    const { error: recordError } = await supabaseAdmin.rpc('record_verified_purchase', {
+      p_user_id: req.user.id,
+      p_receipt_id: receiptId,
+      p_approve: false,
+      p_grant_amount: 3,
+    });
+    if (recordError) {
       // Race with a manual submission of the same receipt, or a duplicate
       // check firing twice -- either way, nothing new to grant here.
-      if (claimInsertError.code === '23505') {
+      if (recordError.code === '23505') {
         return res.json({ found: false });
       }
-      throw new Error(claimInsertError.message);
+      throw new Error(recordError.message);
     }
-
-    const { error: updateError } = await supabaseAdmin
-      .from('profiles')
-      .update({ etsy_receipt_id: receiptId, purchase_verified_at: new Date().toISOString() })
-      .eq('id', req.user.id);
-    if (updateError) throw new Error(updateError.message);
-
-    const { error: grantError } = await supabaseAdmin
-      .rpc('grant_additional_pages', { p_email: req.profile.email, p_amount: 3 });
-    if (grantError) throw new Error(grantError.message);
 
     res.json({ found: true });
   } catch (err) {
