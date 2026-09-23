@@ -3,8 +3,8 @@
 -- reused across accounts even after profiles.etsy_receipt_id gets
 -- overwritten by a subsequent purchase.
 create table public.claimed_etsy_receipts (
-  receipt_id text primary key,
-  user_id uuid not null references auth.users (id) on delete cascade,
+    receipt_id text primary key,
+    user_id uuid not null references auth.users (id) on delete cascade,
   claimed_at timestamptz not null default now()
 );
 
