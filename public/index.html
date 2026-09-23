@@ -383,6 +383,19 @@
         // when its result can't affect the branch.
         let pagesRemaining = null;
         if (profile?.role !== 'admin' && profile?.status === 'approved') {
+          // Silently pick up a repurchase made directly on Etsy (not via the
+          // "buy more" link on My Landing Pages, which is the only other
+          // place this ever got checked) -- a no-op if there's no new
+          // receipt, so safe to call on every load. Awaited before computing
+          // pagesRemaining so a page this call just granted is reflected
+          // immediately instead of only on the next visit.
+          try {
+            await authedFetch('/api/check-new-purchase', { method: 'POST' });
+          } catch {
+            // Best-effort -- the manual order-number form on My Landing Pages
+            // still works if this fails.
+          }
+
           const { data: allowanceData } = await supabase.rpc('create_landing_page_allowed', {
             p_user_id: session.user.id,
           });
