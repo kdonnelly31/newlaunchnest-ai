@@ -112,7 +112,10 @@
     transform: translateY(-3px);
     box-shadow: 0 8px 20px rgba(0,0,0,.08);
   }
-  .card a { text-decoration: none; color: inherit; display: flex; flex-direction: column; height: 100%; }
+  .card button {
+    text-decoration: none; color: inherit; display: flex; flex-direction: column; height: 100%;
+    background: none; border: none; padding: 0; margin: 0; font: inherit; text-align: left; width: 100%; cursor: pointer;
+  }
   .card img {
     width: 100%;
     aspect-ratio: 1 / 1;
@@ -546,14 +549,14 @@
 
         grid.innerHTML = data.listings.map(listing => `
           <div class="card">
-            <a href="${listing.url}" target="_blank" rel="noopener noreferrer">
+            <button type="button" class="card-select" data-listing-id="${listing.id}">
               <img src="${listing.image || ''}" alt="${escapeHtml(listing.title)}" loading="lazy" />
               <div class="body">
                 <p class="title">${escapeHtml(listing.title)}</p>
                 <div class="price">${listing.price ? `$${listing.price} ${listing.currency}` : ''}</div>
                 <div class="qty">${listing.quantity} in stock</div>
               </div>
-            </a>
+            </button>
           </div>
         `).join('');
 
@@ -595,7 +598,7 @@
         currentListing = listing;
         currentListingId = listingId;
         detail.innerHTML = renderListingDetail(listing);
-        document.getElementById('create-landing-btn').addEventListener('click', createLandingPage);
+        document.getElementById('create-landing-btn').addEventListener('click', () => createLandingPage());
       } catch (err) {
         detail.innerHTML = `<div class="panel">Failed to reach the server: ${escapeHtml(err.message)}</div>`;
       }
@@ -621,8 +624,13 @@
       `;
     }
 
-    async function createLandingPage() {
-      if (!currentListing || !currentListingId) return;
+    // prewarmedTab lets a caller that already had to await something before
+    // this (e.g. the grid click handler below, which loads the listing
+    // first) hand off a tab it opened synchronously in its own click
+    // handler, since opening one here would be too late to dodge the popup
+    // blocker in that case.
+    async function createLandingPage(prewarmedTab) {
+      if (!currentListing || !currentListingId) { prewarmedTab?.close(); return; }
       const btn = document.getElementById('create-landing-btn');
       const originalLabel = btn.textContent;
       // Snapshot the listing id this click belongs to, rather than re-reading
@@ -638,16 +646,18 @@
       );
       if (allowanceError) {
         status.textContent = 'Could not check your page allowance: ' + allowanceError.message;
+        prewarmedTab?.close();
         return;
       }
       if (!allowance?.[0]?.allowed) {
         status.innerHTML = 'Page limit reached — purchase again for 3 more. <a href="/my-pages.html" style="color:var(--accent);">Go to Manage My Landing Pages</a>';
+        prewarmedTab?.close();
         return;
       }
 
       // Open the tab synchronously, in direct response to the click — opening
       // it after the awaited fetch below would get blocked as a popup.
-      const newTab = window.open('', '_blank');
+      const newTab = prewarmedTab ?? window.open('', '_blank');
       if (!newTab) {
         alert('Please allow pop-ups for this site to open the landing page in a new tab.');
         return;
@@ -704,6 +714,37 @@
     input.addEventListener('keydown', e => { if (e.key === 'Enter') search(); });
     changeShopLink.addEventListener('click', resetShopSearch);
     listingSelect.addEventListener('change', e => showListingDetail(e.target.value));
+    // Clicking a card creates the landing page directly -- the same as
+    // picking the listing from the dropdown and then clicking Create Landing
+    // Page, just combined into one click. Previously this opened the listing
+    // on Etsy instead. Delegated on the grid since its cards are replaced
+    // wholesale on every search.
+    grid.addEventListener('click', async e => {
+      const card = e.target.closest('.card-select');
+      if (!card) return;
+      const listingId = card.dataset.listingId;
+      listingSelect.value = listingId;
+
+      // Opened synchronously, in direct response to the click, and handed
+      // off to createLandingPage below -- this handler has to load the
+      // listing first (unlike the Create Landing Page button, which only
+      // runs once a listing is already loaded), and opening the tab after
+      // that await would get it blocked as a popup.
+      const newTab = window.open('', '_blank');
+      if (!newTab) {
+        alert('Please allow pop-ups for this site to open the landing page in a new tab.');
+        return;
+      }
+      newTab.document.write('<!DOCTYPE html><title>Loading…</title><body style="font-family:sans-serif;padding:2rem;color:#57534A;">Loading…</body>');
+      newTab.document.close();
+
+      await showListingDetail(listingId);
+      if (currentListingId === listingId) {
+        await createLandingPage(newTab);
+      } else {
+        newTab.close();
+      }
+    });
   </script>
 </body>
 </html>
