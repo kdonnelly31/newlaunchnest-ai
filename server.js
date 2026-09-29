@@ -364,6 +364,47 @@ async function etsyFetch(path, attempt = 0) {
   return res.json();
 }
 
+// A landing page's `content` is a snapshot taken at creation time -- title,
+// description, and photos deliberately stay frozen so a page doesn't shift
+// under a link someone's already shared. But price/quantity/availability are
+// simple facts worth checking fresh on every public view. Best-effort: a
+// rate-limited or momentarily-down Etsy API just falls back to the stored
+// snapshot instead of breaking the page for a real shopper.
+async function refreshListingAvailability(listing, storedPrice) {
+  const unchanged = { listing: { ...listing, availability: { isAvailable: true, reason: null } }, price: storedPrice };
+  if (!listing?.listing_id) return unchanged;
+
+  try {
+    const live = await etsyFetch(`/listings/${listing.listing_id}`);
+    const isSoldOut = live.quantity === 0;
+    const isAvailable = live.state === 'active' && !isSoldOut;
+    const reason = isAvailable ? null : (isSoldOut ? 'sold_out' : 'deactivated');
+    const livePrice = live.price
+      ? (Number(live.price.amount) / Number(live.price.divisor)).toFixed(2)
+      : storedPrice;
+
+    return {
+      listing: {
+        ...listing,
+        quantity: live.quantity ?? listing.quantity,
+        price: live.price ?? listing.price,
+        availability: { isAvailable, reason },
+      },
+      price: livePrice,
+    };
+  } catch (err) {
+    // A 404 specifically means the listing is gone entirely (deleted) --
+    // worth surfacing. Anything else (rate limit, network blip, an Etsy
+    // outage) is transient, so it falls back to the stored snapshot rather
+    // than telling a shopper an available listing is gone.
+    if (String(err.message).startsWith('Etsy API 404')) {
+      return { listing: { ...listing, availability: { isAvailable: false, reason: 'deactivated' } }, price: storedPrice };
+    }
+    console.error('Live availability check failed, using stored snapshot:', err.message);
+    return unchanged;
+  }
+}
+
 // Runs `fn` over `items` with at most CONCURRENCY in flight at once, to stay
 // under Etsy's rate limit while still being much faster than one-at-a-time.
 async function mapWithConcurrency(items, fn) {
@@ -1377,8 +1418,12 @@ app.get('/p/:id', async (req, res) => {
       return res.status(404).send(renderNotFoundPage());
     }
 
+    const { listing, price } = await refreshListingAvailability(row.content.listing, row.content.price);
+
     res.set('Content-Type', 'text/html').send(renderLandingPageDocument({
       ...row.content,
+      listing,
+      price,
       pageUrl: `${req.protocol}://${req.get('host')}/p/${req.params.id}`,
     }));
   } catch (err) {
