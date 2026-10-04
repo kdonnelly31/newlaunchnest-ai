@@ -1381,7 +1381,12 @@ app.post('/api/landing-pages', requireApproved, async (req, res) => {
       return res.status(500).json({ error: insertError.message });
     }
 
-    res.json({ id: row.id, url: `/p/${row.id}` });
+    // ?owner=1 unlocks the Back-to-My-Pages link -- see /p/:id and
+    // lib/landingPageTemplate.js's renderShareBar. My Landing Pages' "View
+    // page" link carries the same marker (my-pages.html), but its Copy link
+    // button and share URLs deliberately don't -- only a link meant for the
+    // seller's own tab should ever carry it.
+    res.json({ id: row.id, url: `/p/${row.id}?owner=1` });
   } catch (err) {
     console.error(err);
     if (err instanceof Anthropic.AuthenticationError) {
@@ -1471,6 +1476,10 @@ app.get('/p/:id', async (req, res) => {
       listing,
       price,
       pageUrl: `${req.protocol}://${req.get('host')}/p/${req.params.id}`,
+      // See the matching comment on /api/landing-pages -- only that route
+      // ever hands out a link with this marker, so seeing it here means
+      // this is the seller's own tab, fresh off creating the page.
+      showBackLink: req.query.owner === '1',
     }));
   } catch (err) {
     // A malformed content snapshot can make rendering throw. This route is

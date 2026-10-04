@@ -579,6 +579,11 @@
       const title = normalized?.title || row.content.listing?.title || 'Untitled page';
       const image = normalized?.cardImageUrl || '';
       const url = `/p/${row.id}`;
+      // Only this one link gets the ?owner=1 marker that unlocks the page's
+      // Back-to-My-Pages link -- url (above) stays bare for Copy link and
+      // the share panel's Pinterest/Facebook URLs, which must never carry it
+      // into a link meant for someone else. See lib/landingPageTemplate.js.
+      const viewUrl = `${url}?owner=1`;
 
       return `
         <div class="page-card">
@@ -592,7 +597,7 @@
             ${normalized ? '<button type="button" class="share-toggle-btn">Share</button>' : ''}
             ${row.content.pagePlan ? '<button type="button" class="edit-toggle-btn">Edit text</button>' : ''}
             <button type="button" class="delete-toggle-btn" data-page-id="${row.id}">Delete</button>
-            <a class="primary" href="${escapeHtml(url)}" target="_blank" rel="noopener noreferrer">View page →</a>
+            <a class="primary" href="${escapeHtml(viewUrl)}" target="_blank" rel="noopener noreferrer">View page →</a>
           </div>
           ${normalized ? renderSharePanel(row) : ''}
           ${row.content.pagePlan ? renderEditPanel(row) : ''}
