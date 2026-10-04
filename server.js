@@ -19,7 +19,7 @@ import {
 } from './lib/etsyOAuth.js';
 import { evaluateReceipt } from './lib/verifyPurchase.js';
 import { extractAccentColor } from './lib/brandColor.js';
-import { renderLandingPageDocument, renderNotFoundPage } from './lib/landingPageTemplate.js';
+import { renderLandingPageDocument, renderNotFoundPage, getPageTitle } from './lib/landingPageTemplate.js';
 import { createMtoStore } from './lib/mtoStore.js';
 import { syncMadeToOrderReceipts } from './lib/etsySync.js';
 import { importAsset } from './lib/assetImporter.js';
@@ -672,6 +672,45 @@ app.post('/api/admin/profiles/:id/grant-pages', requireAdmin, async (req, res) =
   }
 
   res.json({ profile: { ...profile, pages_used: pagesUsed ?? 0 }, page_allowance: newAllowance });
+});
+
+// On-demand only (never run for every customer on every admin page load) --
+// checks live Etsy availability for one customer's landing pages, the same
+// check /p/:id does for a single page, run here across all of theirs at once
+// so an admin can spot a sold-out or deactivated listing without opening
+// each page individually.
+app.get('/api/admin/profiles/:id/pages', requireAdmin, async (req, res) => {
+  const { data: rows, error } = await supabaseAdmin
+    .from('landing_pages')
+    .select('id, content, created_at')
+    .eq('user_id', req.params.id)
+    .order('created_at', { ascending: false });
+  if (error) {
+    console.error(error);
+    return res.status(500).json({ error: error.message });
+  }
+
+  try {
+    const pages = await mapWithConcurrency(rows, async (row) => {
+      // A handful of early test pages have no content snapshot at all (see
+      // the same check in my-pages.html) -- nothing to check availability
+      // on, so report them as such instead of throwing on row.content.listing.
+      if (!row.content) {
+        return { id: row.id, created_at: row.created_at, title: null, availability: null };
+      }
+      const { listing } = await refreshListingAvailability(row.content.listing, row.content.price);
+      return {
+        id: row.id,
+        created_at: row.created_at,
+        title: getPageTitle(row.content),
+        availability: listing.availability,
+      };
+    });
+    res.json({ pages });
+  } catch (err) {
+    console.error(err);
+    res.status(502).json({ error: err.message });
+  }
 });
 
 app.post('/api/admin/mto/sync-now', requireAdmin, async (req, res) => {

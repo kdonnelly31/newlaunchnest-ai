@@ -146,7 +146,10 @@
         <td>${profile.company_name ?? ''}</td>
         <td>${roleSelect}</td>
         <td><span class="badge ${STATUS_BADGE[profile.status] ?? ''}">${profile.status}</span></td>
-        <td>${profile.pages_used} / ${profile.page_allowance} (${Math.max(profile.page_allowance - profile.pages_used, 0)} left)</td>
+        <td>
+          ${profile.pages_used} / ${profile.page_allowance} (${Math.max(profile.page_allowance - profile.pages_used, 0)} left)
+          ${profile.pages_used > 0 ? `<br /><button class="btn-check-pages" style="margin-top:.3rem; font-size:.78rem; padding:.25rem .5rem;">Check listing status</button>` : ''}
+        </td>
         <td>
           <input class="etsy-shop-input" type="text" placeholder="e.g. YarnCraftCo" value="${profile.etsy_shop_name ?? ''}" style="width:9rem; padding:.35rem; border:1px solid var(--border); border-radius:6px; font-size:.85rem;" />
           <button class="btn-save-shop">Save</button>
@@ -168,6 +171,7 @@
           setStatus(data.error || 'Something went wrong.', 'error');
           return;
         }
+        detailRow?.remove();
         tr.replaceWith(renderRow(data.profile, accessToken));
       }
 
@@ -184,6 +188,7 @@
           return;
         }
         setStatus(`Granted ${amount} page(s) to ${profile.email} (new total: ${data.page_allowance}).`, 'success');
+        detailRow?.remove();
         tr.replaceWith(renderRow(data.profile, accessToken));
       }
 
@@ -193,7 +198,83 @@
         patch({ etsy_shop_name: tr.querySelector('.etsy-shop-input').value })
       );
 
+      // Only fetched when an admin actually clicks -- checking every
+      // customer's every page's live Etsy status on every table load would
+      // be slow and needlessly hit Etsy's API for pages nobody's looking at.
+      const checkPagesBtn = tr.querySelector('.btn-check-pages');
+      let detailRow = null;
+      checkPagesBtn?.addEventListener('click', async () => {
+        if (detailRow) {
+          detailRow.remove();
+          detailRow = null;
+          checkPagesBtn.textContent = 'Check listing status';
+          return;
+        }
+        checkPagesBtn.disabled = true;
+        checkPagesBtn.textContent = 'Checking…';
+        try {
+          const res = await fetch(`/api/admin/profiles/${profile.id}/pages`, {
+            headers: { Authorization: `Bearer ${accessToken}` },
+          });
+          const data = await res.json();
+          if (!res.ok) {
+            setStatus(data.error || 'Could not check pages.', 'error');
+            return;
+          }
+          detailRow = document.createElement('tr');
+          const td = document.createElement('td');
+          td.colSpan = 8;
+          td.innerHTML = renderPagesDetail(data.pages);
+          detailRow.appendChild(td);
+          tr.after(detailRow);
+          checkPagesBtn.textContent = 'Hide listing status';
+        } catch (err) {
+          setStatus('Failed to reach the server: ' + err.message, 'error');
+        } finally {
+          checkPagesBtn.disabled = false;
+        }
+      });
+
       return tr;
+    }
+
+    function escapeAdminHtml(value) {
+      const div = document.createElement('div');
+      div.textContent = value ?? '';
+      return div.innerHTML;
+    }
+
+    function renderPagesDetail(pages) {
+      if (!pages.length) {
+        return `<p style="margin:.5rem 0; color:var(--muted); font-size:.85rem;">No landing pages.</p>`;
+      }
+      return `
+        <ul style="margin:.5rem 0; padding-left:1.2rem; font-size:.85rem;">
+          ${pages.map(p => {
+            // Early test pages have no content snapshot (see server.js) --
+            // nothing to link to or check availability on, same as how
+            // my-pages.html treats them.
+            if (!p.availability) {
+              return `
+                <li style="margin-bottom:.35rem;">
+                  Early test page — no link available
+                  <span style="color:var(--muted);">created ${new Date(p.created_at).toLocaleDateString()}</span>
+                </li>
+              `;
+            }
+            const badge = p.availability.isAvailable
+              ? `<span class="badge badge-approved">Available</span>`
+              : `<span class="badge badge-declined">${p.availability.reason === 'sold_out' ? 'Sold Out' : 'Unavailable'}</span>`;
+            return `
+              <li style="margin-bottom:.35rem;">
+                <a href="/p/${p.id}" target="_blank" rel="noopener noreferrer">${escapeAdminHtml(p.title)}</a>
+                ${badge}
+                <span style="color:var(--muted);">created ${new Date(p.created_at).toLocaleDateString()}</span>
+              </li>
+            `;
+          }).join('')}
+        </ul>
+      `;
     }
 
     async function connectEtsy(accessToken) {
