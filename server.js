@@ -364,6 +364,29 @@ async function etsyFetch(path, attempt = 0) {
   return res.json();
 }
 
+// The plain /listings/{id} endpoint's `price` field is, per Etsy's own docs,
+// "the minimum possible price" -- it never reflects an active sale. The real
+// buyer-facing price (with discount info) only exists via includes=BuyerPrice
+// on the batch listings endpoint, which needs a buyer_country to compute --
+// US is a reasonable fixed choice since the discount itself (seller-set,
+// percentage or fixed amount) is the same regardless of country; only
+// shipping cost baked into buyer_price would vary, and that's not displayed
+// here. Returns null (not an error) on any failure so callers fall back to
+// the regular price instead of breaking the page over a sale badge.
+async function getBuyerPrice(listingId) {
+  try {
+    const data = await etsyFetch(`/listings/batch?listing_ids=${listingId}&includes=BuyerPrice&buyer_country=US`);
+    return data.results?.[0]?.buyer_price ?? null;
+  } catch (err) {
+    console.error('Buyer price lookup failed, using regular price:', err.message);
+    return null;
+  }
+}
+
+function moneyToDecimal(money) {
+  return (Number(money.amount) / Number(money.divisor)).toFixed(2);
+}
+
 // A landing page's `content` is a snapshot taken at creation time -- title,
 // description, and photos deliberately stay frozen so a page doesn't shift
 // under a link someone's already shared. But price/quantity/availability are
@@ -371,7 +394,7 @@ async function etsyFetch(path, attempt = 0) {
 // rate-limited or momentarily-down Etsy API just falls back to the stored
 // snapshot instead of breaking the page for a real shopper.
 async function refreshListingAvailability(listing, storedPrice) {
-  const unchanged = { listing: { ...listing, availability: { isAvailable: true, reason: null } }, price: storedPrice };
+  const unchanged = { listing: { ...listing, availability: { isAvailable: true, reason: null } }, price: storedPrice, originalPrice: null };
   if (!listing?.listing_id) return unchanged;
 
   try {
@@ -379,9 +402,13 @@ async function refreshListingAvailability(listing, storedPrice) {
     const isSoldOut = live.quantity === 0;
     const isAvailable = live.state === 'active' && !isSoldOut;
     const reason = isAvailable ? null : (isSoldOut ? 'sold_out' : 'deactivated');
-    const livePrice = live.price
-      ? (Number(live.price.amount) / Number(live.price.divisor)).toFixed(2)
-      : storedPrice;
+    const regularPrice = live.price ? moneyToDecimal(live.price) : storedPrice;
+
+    // Only worth the extra API call for a listing a shopper could actually
+    // buy -- a sold-out/deactivated listing's sale status doesn't matter.
+    const buyerPrice = isAvailable ? await getBuyerPrice(listing.listing_id) : null;
+    const onSale = buyerPrice?.has_discount && buyerPrice.discounted_price;
+    const livePrice = onSale ? moneyToDecimal(buyerPrice.discounted_price) : regularPrice;
 
     return {
       listing: {
@@ -391,6 +418,9 @@ async function refreshListingAvailability(listing, storedPrice) {
         availability: { isAvailable, reason },
       },
       price: livePrice,
+      // Only set when there's an active sale, so the template can show it
+      // struck through next to the sale price -- null the rest of the time.
+      originalPrice: onSale ? regularPrice : null,
     };
   } catch (err) {
     // A 404 specifically means the listing is gone entirely (deleted) --
@@ -398,7 +428,7 @@ async function refreshListingAvailability(listing, storedPrice) {
     // outage) is transient, so it falls back to the stored snapshot rather
     // than telling a shopper an available listing is gone.
     if (String(err.message).startsWith('Etsy API 404')) {
-      return { listing: { ...listing, availability: { isAvailable: false, reason: 'deactivated' } }, price: storedPrice };
+      return { listing: { ...listing, availability: { isAvailable: false, reason: 'deactivated' } }, price: storedPrice, originalPrice: null };
     }
     console.error('Live availability check failed, using stored snapshot:', err.message);
     return unchanged;
@@ -1382,9 +1412,16 @@ app.post('/api/landing-pages', requireApproved, async (req, res) => {
       SOCIAL_PLATFORMS,
     );
 
-    const price = listing.price
-      ? (Number(listing.price.amount) / Number(listing.price.divisor)).toFixed(2)
-      : null;
+    // This stored price is just the fallback used if a later live view's
+    // Etsy call fails (see refreshListingAvailability, which always runs on
+    // an actual page view) -- still worth getting right at creation time so
+    // that fallback reflects an active sale too, not just the regular price.
+    const buyerPrice = await getBuyerPrice(listing.listing_id);
+    const price = buyerPrice?.has_discount && buyerPrice.discounted_price
+      ? moneyToDecimal(buyerPrice.discounted_price)
+      : listing.price
+        ? moneyToDecimal(listing.price)
+        : null;
 
     // Best-effort: theme the page with a color pulled from the shop's own
     // icon/banner/listing photo. Never blocks page creation on failure --
@@ -1508,12 +1545,13 @@ app.get('/p/:id', async (req, res) => {
       return res.status(404).send(renderNotFoundPage());
     }
 
-    const { listing, price } = await refreshListingAvailability(row.content.listing, row.content.price);
+    const { listing, price, originalPrice } = await refreshListingAvailability(row.content.listing, row.content.price);
 
     res.set('Content-Type', 'text/html').send(renderLandingPageDocument({
       ...row.content,
       listing,
       price,
+      originalPrice,
       pageUrl: `${req.protocol}://${req.get('host')}/p/${req.params.id}`,
       // See the matching comment on /api/landing-pages -- only that route
       // ever hands out a link with this marker, so seeing it here means
