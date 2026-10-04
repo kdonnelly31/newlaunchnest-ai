@@ -427,6 +427,41 @@ async function findShopByName(shopName) {
   return data.results?.[0] ?? null;
 }
 
+// Etsy sellers can only own one shop, and a receipt's buyer_user_id is
+// Etsy's own identifier (unlike a typed shop-name answer, it can't be
+// mistyped) -- so this resolves the buyer's shop directly, no personalization
+// question needed. Returns null (not an error) for a buyer who hasn't opened
+// an Etsy shop yet, so callers can fall back to asking.
+async function getShopByOwnerUserId(userId) {
+  if (!userId) return null;
+  try {
+    return await etsyFetch(`/users/${userId}/shops`);
+  } catch (err) {
+    if (String(err.message).startsWith('Etsy API 404')) return null;
+    throw err;
+  }
+}
+
+// A buyer's free-typed answer to "Your Etsy Shop Name" (or an admin's manual
+// entry) can differ from Etsy's own shop_name in small ways Etsy's shop
+// search still tolerates -- extra spaces, a typed display title instead of
+// the no-space handle, etc. assertShopAllowed later does an exact (modulo
+// case) comparison against the shop_name Etsy returns on the listing itself,
+// so storing anything other than Etsy's canonical spelling here causes that
+// check to fail later even though the shop search worked fine. Best-effort:
+// falls back to the raw input if Etsy's shop search can't resolve it, rather
+// than blocking approval/edits on a lookup hiccup.
+async function canonicalizeShopName(rawShopName) {
+  if (!rawShopName) return rawShopName;
+  try {
+    const shop = await findShopByName(rawShopName);
+    return shop?.shop_name || rawShopName;
+  } catch (err) {
+    console.error('Shop name canonicalization failed, using raw value:', err.message);
+    return rawShopName;
+  }
+}
+
 async function getAllActiveListings(shopId) {
   const firstPage = await etsyFetch(`/shops/${shopId}/listings/active?limit=${PAGE_SIZE}&offset=0`);
   const listings = [...firstPage.results];
@@ -560,7 +595,10 @@ app.patch('/api/admin/profiles/:id', requireAdmin, async (req, res) => {
     updates.status = status;
   }
   if (etsy_shop_name !== undefined) {
-    updates.etsy_shop_name = typeof etsy_shop_name === 'string' ? etsy_shop_name.trim() || null : null;
+    const trimmed = typeof etsy_shop_name === 'string' ? etsy_shop_name.trim() || null : null;
+    // Resolve to Etsy's own spelling -- see canonicalizeShopName -- so a
+    // manual admin fix doesn't reintroduce the same mismatch it's meant to fix.
+    updates.etsy_shop_name = await canonicalizeShopName(trimmed);
   }
   if (Object.keys(updates).length === 0) {
     return res.status(400).json({ error: 'Provide role, status, and/or etsy_shop_name to update.' });
@@ -1053,6 +1091,14 @@ app.post('/api/verify-purchase', requireAuth, async (req, res) => {
       return res.status(result.status).json({ error: result.message });
     }
 
+    // Prefer resolving the buyer's shop directly from their Etsy user ID --
+    // exact and can't be mistyped, unlike the "Your Etsy Shop Name"
+    // personalization answer. Only buyers who don't have an Etsy shop yet
+    // (getShopByOwnerUserId returns null) fall back to that typed answer,
+    // still canonicalized against Etsy's own spelling for the same reason.
+    const ownedShop = await getShopByOwnerUserId(result.buyerUserId);
+    const canonicalShopName = ownedShop?.shop_name || await canonicalizeShopName(result.shopName);
+
     // Claims the receipt, updates the profile, and (for a repurchase) grants
     // +3 pages all in one atomic call -- record_verified_purchase does all
     // three writes in a single transaction, so a failure partway through
@@ -1066,7 +1112,7 @@ app.post('/api/verify-purchase', requireAuth, async (req, res) => {
       // Falls back to the existing manual admin field when the buyer's
       // answer to the "Your Etsy Shop Name" personalization question is
       // missing (e.g. an older order placed before that question existed).
-      p_shop_name: result.shopName ?? null,
+      p_shop_name: canonicalShopName ?? null,
       // Lets a future repurchase be auto-detected instead of asking the
       // buyer to retype another order number -- see /api/check-new-purchase.
       p_buyer_user_id: result.buyerUserId ?? null,
