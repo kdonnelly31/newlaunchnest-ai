@@ -261,6 +261,15 @@
     <p>Select an active listing to create a landing page.</p>
   </header>
 
+  <footer id="app-footer" style="text-align:center; padding:1.5rem; color:var(--muted); font-size:.78rem; line-height:1.6;">
+    <p style="margin:0 0 .4rem;">
+      <a href="/terms.html" style="color:var(--muted);">Terms of Service</a>
+      &nbsp;·&nbsp;
+      <a href="/privacy.html" style="color:var(--muted);">Privacy Policy</a>
+    </p>
+    <p style="margin:0;">The term "Etsy" is a trademark of Etsy, Inc. This Application uses Etsy's API, but is not endorsed or certified by Etsy.</p>
+  </footer>
+
   <script type="module">
     import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
 
@@ -326,7 +335,15 @@
               <p id="verify-purchase-message" style="min-height:1.3rem; margin-top:1rem; font-size:.9rem; color:#b3261e;"></p>
               ` : ''}
               <p><a id="pending-logout" href="#" style="color:#d5641c;">Log out</a></p>
-            </div>`;
+            </div>
+            <footer style="text-align:center; padding:1.5rem; color:#6b6b6b; font-size:.78rem; line-height:1.6;">
+              <p style="margin:0 0 .4rem;">
+                <a href="/terms.html" style="color:#6b6b6b;">Terms of Service</a>
+                &nbsp;·&nbsp;
+                <a href="/privacy.html" style="color:#6b6b6b;">Privacy Policy</a>
+              </p>
+              <p style="margin:0;">The term "Etsy" is a trademark of Etsy, Inc. This Application uses Etsy's API, but is not endorsed or certified by Etsy.</p>
+            </footer>`;
           document.getElementById('pending-logout').addEventListener('click', async (e) => {
             e.preventDefault();
             await supabase.auth.signOut();
