@@ -343,16 +343,32 @@ async function runMtoSync(trigger) {
 
 const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
 
+// Every caller of etsyFetch runs inside an interactive request bound by the
+// same 60s Vercel function timeout (vercel.json) -- unlike listMtoReceipts
+// below, which is cron-triggered and can afford the full shared MAX_RETRIES
+// budget. With MAX_RETRIES=5, a single rate-limited call could burn ~15s+ of
+// backoff sleep on its own; some request paths (e.g. landing-page creation)
+// make two etsyFetch calls, so that alone could approach or exceed the whole
+// time budget before any real work happens. A lower retry count, plus a cap
+// on any single delay (an Etsy-provided retry-after header could otherwise
+// be arbitrarily large), keeps this bounded without giving up retries
+// entirely.
+const ETSY_FETCH_MAX_RETRIES = 2;
+const ETSY_FETCH_MAX_DELAY_MS = 3000;
+
 async function etsyFetch(path, attempt = 0) {
   const res = await fetch(`${ETSY_BASE}${path}`, {
     headers: { 'x-api-key': API_KEY_HEADER },
   });
 
-  if (res.status === 429 && attempt < MAX_RETRIES) {
+  if (res.status === 429 && attempt < ETSY_FETCH_MAX_RETRIES) {
     const retryAfterSec = Number(res.headers.get('retry-after'));
-    const delayMs = Number.isFinite(retryAfterSec) && retryAfterSec > 0
-      ? retryAfterSec * 1000
-      : 500 * 2 ** attempt;
+    const delayMs = Math.min(
+      Number.isFinite(retryAfterSec) && retryAfterSec > 0
+        ? retryAfterSec * 1000
+        : 500 * 2 ** attempt,
+      ETSY_FETCH_MAX_DELAY_MS,
+    );
     await sleep(delayMs);
     return etsyFetch(path, attempt + 1);
   }
