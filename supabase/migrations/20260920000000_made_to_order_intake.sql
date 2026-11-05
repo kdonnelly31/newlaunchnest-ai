@@ -4,7 +4,7 @@
 create table public.mto_settings (
   id integer primary key default 1 check (id = 1),
   enabled boolean not null default false,
-  cutover_at timestamptz,
+  cutover_at timestamptz, 
   updated_at timestamptz not null default now()
 );
 insert into public.mto_settings (id) values (1);
