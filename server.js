@@ -1784,6 +1784,9 @@ app.get('/api/brand-kits/suggested-colors', requireApproved, async (req, res) =>
 // is the real enforcement point (design doc §16 item 9) -- not an
 // app-layer check that concurrent requests could race past.
 app.post('/api/pinterest-pins/generate', requireApproved, async (req, res) => {
+  if (!anthropic) {
+    return res.status(503).json({ error: 'Pinterest Pins are not configured on the server.' });
+  }
   if (!supabaseAdmin) {
     return res.status(503).json({ error: 'Pinterest Pins are not configured on the server.' });
   }
