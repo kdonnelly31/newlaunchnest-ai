@@ -722,6 +722,58 @@ app.post('/api/admin/profiles/:id/grant-pages', requireAdmin, async (req, res) =
   res.json({ profile: { ...profile, pages_used: pagesUsed ?? 0 }, page_allowance: newAllowance });
 });
 
+// Called when a buyer repurchases Pinterest pin batches -- adds to (never
+// resets) their pin_batch_allowance via the grant_additional_pin_batches()
+// Postgres function, which only the service-role key can execute. Mirrors
+// grant-pages above.
+app.post('/api/admin/profiles/:id/grant-pin-batches', requireAdmin, async (req, res) => {
+  const amount = Number.isInteger(req.body?.amount) ? req.body.amount : 3;
+  if (amount <= 0) {
+    return res.status(400).json({ error: 'amount must be a positive integer.' });
+  }
+
+  const { data: target, error: lookupError } = await supabaseAdmin
+    .from('profiles')
+    .select('email')
+    .eq('id', req.params.id)
+    .single();
+  if (lookupError || !target) {
+    return res.status(404).json({ error: 'No profile found for that id.' });
+  }
+
+  const { data: newAllowance, error: grantError } = await supabaseAdmin
+    .rpc('grant_additional_pin_batches', { p_email: target.email, p_amount: amount });
+  if (grantError) {
+    console.error(grantError);
+    return res.status(500).json({ error: grantError.message });
+  }
+
+  const { data: profile, error: profileError } = await supabaseAdmin
+    .from('profiles')
+    .select('id, email, full_name, company_name, role, status, pin_batch_allowance, etsy_shop_name, created_at')
+    .eq('id', req.params.id)
+    .single();
+  if (profileError) {
+    console.error(profileError);
+    return res.status(500).json({ error: profileError.message });
+  }
+
+  // count(distinct batch_id), not a plain row count -- each batch inserts
+  // 3 rows (one per angle) sharing one batch_id, and the allowance RLS
+  // policy itself is written against distinct batch_id, not row count.
+  const { data: batchRows, error: countError } = await supabaseAdmin
+    .from('pinterest_pins')
+    .select('batch_id')
+    .eq('user_id', profile.id);
+  if (countError) {
+    console.error(countError);
+    return res.status(500).json({ error: countError.message });
+  }
+  const batchesUsed = new Set((batchRows || []).map((r) => r.batch_id)).size;
+
+  res.json({ profile: { ...profile, batches_used: batchesUsed }, pin_batch_allowance: newAllowance });
+});
+
 // On-demand only (never run for every customer on every admin page load) --
 // checks live Etsy availability for one customer's landing pages, the same
 // check /p/:id does for a single page, run here across all of theirs at once
@@ -1808,12 +1860,22 @@ app.post('/api/pinterest-pins/generate', requireApproved, async (req, res) => {
 
   let listing;
   try {
-    listing = await etsyFetch(`/listings/${listingId}?includes=Shop`);
+    listing = await etsyFetch(`/listings/${listingId}?includes=Images,Shop`);
   } catch (err) {
     console.error(err);
     return res.status(502).json({ error: err.message });
   }
   if (!assertShopAllowed(req, res, listing.shop?.shop_name || '')) return;
+
+  // photoUrl comes straight from the request body -- verify it's actually
+  // one of this listing's own photos before doing any Claude/rendering
+  // work, rather than trusting whatever URL the client sends.
+  const validPhotoUrls = new Set(
+    (listing.images || []).flatMap((img) => [img.url_fullxfull, img.url_570xN].filter(Boolean))
+  );
+  if (!validPhotoUrls.has(photoUrl)) {
+    return res.status(400).json({ error: "photoUrl must be one of this listing's own photos." });
+  }
 
   const supabaseAsUser = createClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
     auth: { persistSession: false },
@@ -1921,6 +1983,7 @@ app.post('/api/pinterest-pins/generate', requireApproved, async (req, res) => {
         previewUrl: signedUrlData.signedUrl,
         photoClassification: row.photo_classification,
         classificationConfidence: row.classification_confidence,
+        status: row.status,
       });
     }
 
@@ -1968,6 +2031,18 @@ app.get('/api/pinterest-pins/:id/signed-url', requireApproved, async (req, res) 
   }
   if (!row) {
     return res.status(404).json({ error: 'Pin not found.' });
+  }
+
+  // The RLS-scoped read above only confirms this row belongs to the caller
+  // -- it does NOT confirm image_path still points at an object the caller
+  // actually owns, because RLS restricts rows by user_id, not by column, so
+  // a seller can edit their own row's image_path via the Supabase client.
+  // Storage paths are always written server-side as
+  // {user_id}/{batchId}/{angle}.png by the generate route, so verify the
+  // prefix before using the service-role client (which bypasses RLS) to
+  // sign it.
+  if (!row.image_path.startsWith(`${req.user.id}/`)) {
+    return res.status(403).json({ error: 'Invalid image path.' });
   }
 
   const options = req.query.download === '1' ? { download: 'pinterest-pin.png' } : undefined;

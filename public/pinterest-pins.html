@@ -394,13 +394,22 @@
           <label>Pinterest title <input class="pin-title-input" value="${escapeHtml(pin.pinTitle)}" /></label>
           <label>Description <textarea class="pin-desc-input">${escapeHtml(pin.pinDescription)}</textarea></label>
           <label>Destination link <input class="pin-dest-input" value="${escapeHtml(pin.destinationUrl)}" /></label>
+          <p>Status: <span class="pin-status-label">${escapeHtml(statusLabel(pin.status))}</span></p>
           <button type="button" class="save-edits-btn">Save edits</button>
+          <button type="button" class="approve-btn">Approve</button>
+          <button type="button" class="reject-btn">Reject</button>
           <button type="button" class="share-btn">Share to Pinterest</button>
           <a class="download-link" href="#" target="_blank">Download</a>
         </article>
       `).join('');
 
       panel.querySelectorAll('article').forEach(article => wireUpPinCard(article));
+    }
+
+    function statusLabel(status) {
+      if (status === 'approved') return 'Approved';
+      if (status === 'rejected') return 'Rejected';
+      return 'Draft';
     }
 
     function wireUpPinCard(article) {
@@ -417,6 +426,21 @@
           .eq('id', pinId);
         alert(error ? `Failed to save: ${error.message}` : 'Saved.');
       });
+
+      async function setStatus(newStatus) {
+        const { error } = await window.pinCreatorSupabase
+          .from('pinterest_pins')
+          .update({ status: newStatus })
+          .eq('id', pinId);
+        if (error) {
+          alert(`Failed to update status: ${error.message}`);
+          return;
+        }
+        article.querySelector('.pin-status-label').textContent = statusLabel(newStatus);
+      }
+
+      article.querySelector('.approve-btn').addEventListener('click', () => setStatus('approved'));
+      article.querySelector('.reject-btn').addEventListener('click', () => setStatus('rejected'));
 
       article.querySelector('.share-btn').addEventListener('click', async () => {
         const imgEl = article.querySelector('img');
