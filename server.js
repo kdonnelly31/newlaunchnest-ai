@@ -1612,6 +1612,169 @@ app.get('/api/listing/:listingId', requireApproved, async (req, res) => {
   }
 });
 
+// Brand Kit CRUD. Reads happen through RLS from the client for the list
+// view (public/pinterest-pins.html does this directly, same as
+// public/my-pages.html already does for landing_pages) -- these routes
+// exist only for the operations that need real server-side logic: writes
+// that must run as the caller (to respect RLS, same rationale as
+// POST /api/landing-pages), the logo upload, and the shop-color suggestion.
+app.post('/api/brand-kits', requireApproved, async (req, res) => {
+  const { name, primaryColor, secondaryColor, accentColor, headlineFont, bodyFont, visualStyle } = req.body ?? {};
+  if (!name || !primaryColor) {
+    return res.status(400).json({ error: 'A name and a primary color are required.' });
+  }
+
+  const supabaseAsUser = createClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
+    auth: { persistSession: false },
+    global: { headers: { Authorization: req.headers.authorization } },
+  });
+
+  const { data: row, error } = await supabaseAsUser
+    .from('brand_kits')
+    .insert({
+      user_id: req.user.id,
+      name,
+      primary_color: primaryColor,
+      secondary_color: secondaryColor ?? null,
+      accent_color: accentColor ?? null,
+      headline_font: headlineFont ?? 'inter',
+      body_font: bodyFont ?? 'inter',
+      visual_style: visualStyle ?? 'minimal',
+    })
+    .select()
+    .single();
+  if (error) {
+    console.error(error);
+    return res.status(500).json({ error: error.message });
+  }
+  res.json(row);
+});
+
+app.patch('/api/brand-kits/:id', requireApproved, async (req, res) => {
+  const { name, primaryColor, secondaryColor, accentColor, headlineFont, bodyFont, visualStyle } = req.body ?? {};
+
+  const supabaseAsUser = createClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
+    auth: { persistSession: false },
+    global: { headers: { Authorization: req.headers.authorization } },
+  });
+
+  const updates = {};
+  if (name !== undefined) updates.name = name;
+  if (primaryColor !== undefined) updates.primary_color = primaryColor;
+  if (secondaryColor !== undefined) updates.secondary_color = secondaryColor;
+  if (accentColor !== undefined) updates.accent_color = accentColor;
+  if (headlineFont !== undefined) updates.headline_font = headlineFont;
+  if (bodyFont !== undefined) updates.body_font = bodyFont;
+  if (visualStyle !== undefined) updates.visual_style = visualStyle;
+
+  const { data: row, error } = await supabaseAsUser
+    .from('brand_kits')
+    .update(updates)
+    .eq('id', req.params.id)
+    .select()
+    .maybeSingle();
+  if (error) {
+    console.error(error);
+    return res.status(500).json({ error: error.message });
+  }
+  if (!row) {
+    return res.status(404).json({ error: 'Brand kit not found.' });
+  }
+  res.json(row);
+});
+
+app.delete('/api/brand-kits/:id', requireApproved, async (req, res) => {
+  const supabaseAsUser = createClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
+    auth: { persistSession: false },
+    global: { headers: { Authorization: req.headers.authorization } },
+  });
+
+  const { error } = await supabaseAsUser.from('brand_kits').delete().eq('id', req.params.id);
+  if (error) {
+    console.error(error);
+    return res.status(500).json({ error: error.message });
+  }
+  res.json({ ok: true });
+});
+
+// Uploads a logo for an existing Brand Kit the caller owns. Stored at
+// {user_id}/brand-kits/{brand_kit_id}/logo.{ext} in the private
+// pinterest-pin-assets bucket (design doc §16 item 10) -- uploaded via the
+// service role (storage has no per-user RLS, same as mto-assets), but only
+// after confirming via RLS-scoped read that this brand kit really belongs
+// to the caller.
+app.post('/api/brand-kits/:id/logo', requireApproved, upload.single('logo'), async (req, res) => {
+  if (!req.file) {
+    return res.status(400).json({ error: 'Missing logo file.' });
+  }
+
+  const supabaseAsUser = createClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
+    auth: { persistSession: false },
+    global: { headers: { Authorization: req.headers.authorization } },
+  });
+
+  const { data: kit, error: fetchError } = await supabaseAsUser
+    .from('brand_kits')
+    .select('id')
+    .eq('id', req.params.id)
+    .maybeSingle();
+  if (fetchError) {
+    console.error(fetchError);
+    return res.status(500).json({ error: fetchError.message });
+  }
+  if (!kit) {
+    return res.status(404).json({ error: 'Brand kit not found.' });
+  }
+
+  const ext = (req.file.originalname.split('.').pop() || 'png').toLowerCase();
+  const logoPath = `${req.user.id}/brand-kits/${req.params.id}/logo.${ext}`;
+
+  const { error: uploadError } = await supabaseAdmin.storage
+    .from('pinterest-pin-assets')
+    .upload(logoPath, req.file.buffer, { contentType: req.file.mimetype, upsert: true });
+  if (uploadError) {
+    console.error(uploadError);
+    return res.status(500).json({ error: uploadError.message });
+  }
+
+  const { error: updateError } = await supabaseAsUser
+    .from('brand_kits')
+    .update({ logo_path: logoPath })
+    .eq('id', req.params.id);
+  if (updateError) {
+    console.error(updateError);
+    return res.status(500).json({ error: updateError.message });
+  }
+
+  res.json({ ok: true, logoPath });
+});
+
+// Best-effort suggestion for a seller's first Brand Kit, pulled from their
+// shop's own icon (design doc §6 step 2 / §16: "never silently applied
+// without seeing it" -- the client shows this as an editable pre-fill, it
+// never saves anything on its own). Reuses extractAccentColor exactly as
+// the landing-page feature already does (server.js's brandImageUrl logic).
+app.get('/api/brand-kits/suggested-colors', requireApproved, async (req, res) => {
+  const { shopName } = req.query;
+  if (!shopName) {
+    return res.status(400).json({ error: 'Missing shopName.' });
+  }
+  if (!assertShopAllowed(req, res, shopName)) return;
+
+  try {
+    const shop = await etsyFetch(`/shops/${encodeURIComponent(shopName)}`);
+    const iconUrl = shop.icon_url_fullxfull;
+    if (!iconUrl) {
+      return res.json({ primaryColor: null, accentColor: null });
+    }
+    const { accent, accentWarm } = await extractAccentColor(iconUrl);
+    res.json({ primaryColor: accent, accentColor: accentWarm });
+  } catch (err) {
+    console.error('Brand kit color suggestion failed:', err.message);
+    res.json({ primaryColor: null, accentColor: null });
+  }
+});
+
 app.get('/api/shop/:shopName', requireApproved, async (req, res) => {
   if (!assertShopAllowed(req, res, req.params.shopName)) return;
   try {
