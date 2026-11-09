@@ -70,8 +70,14 @@
   <div class="panel" id="step-3-panel" style="display:none;"></div>
   <div class="panel" id="step-4-panel" style="display:none;"></div>
 
+  <section class="panel">
+    <h2>Your Pinterest Pins</h2>
+    <div id="library"></div>
+  </section>
+
   <script type="module">
     import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
+    import { buildPinterestShareUrl, formatCaptionForCopy } from './shareLinks.js';
 
     const status = document.getElementById('status');
     const grid = document.getElementById('grid');
@@ -234,6 +240,236 @@
       document.getElementById('step-indicator-2').classList.add('active');
       window.dispatchEvent(new CustomEvent('pin-creator:photo-chosen'));
     }
+
+    window.addEventListener('pin-creator:photo-chosen', initBrandKitStep);
+
+    async function initBrandKitStep() {
+      const panel = document.getElementById('step-2-panel');
+      panel.style.display = 'block';
+      panel.innerHTML = '<p>Loading your Brand Kits…</p>';
+
+      const { data: kits, error } = await window.pinCreatorSupabase
+        .from('brand_kits')
+        .select('*')
+        .order('created_at', { ascending: false });
+      if (error) {
+        panel.innerHTML = `<p>Failed to load Brand Kits: ${error.message}</p>`;
+        return;
+      }
+
+      // Exactly one kit: auto-select it and skip straight to Generate --
+      // design doc's "don't overwhelm with options" principle.
+      if (kits.length === 1) {
+        window.pinCreatorState.selectedBrandKitId = kits[0].id;
+        panel.style.display = 'none';
+        showGenerateStep();
+        return;
+      }
+
+      if (kits.length === 0) {
+        await renderNewBrandKitForm(panel);
+        return;
+      }
+
+      panel.innerHTML = `
+        <label for="brand-kit-select">Choose a Brand Kit</label>
+        <select id="brand-kit-select">
+          <option value="">Select…</option>
+          ${kits.map(k => `<option value="${k.id}">${k.name}</option>`).join('')}
+        </select>
+        <p><button type="button" id="new-brand-kit-btn">Create a new Brand Kit instead</button></p>
+      `;
+      document.getElementById('brand-kit-select').addEventListener('change', (e) => {
+        if (!e.target.value) return;
+        window.pinCreatorState.selectedBrandKitId = e.target.value;
+        panel.style.display = 'none';
+        showGenerateStep();
+      });
+      document.getElementById('new-brand-kit-btn').addEventListener('click', () => renderNewBrandKitForm(panel));
+    }
+
+    async function renderNewBrandKitForm(panel) {
+      const listing = window.pinCreatorState.selectedListing;
+      const shopName = listing?.shop?.shop_name || '';
+      let suggestion = { primaryColor: null, accentColor: null };
+      if (shopName) {
+        const res = await window.authedFetch(`/api/brand-kits/suggested-colors?shopName=${encodeURIComponent(shopName)}`);
+        if (res.ok) suggestion = await res.json();
+      }
+
+      const primary = suggestion.primaryColor || '#2E4636';
+      const accent = suggestion.accentColor || '#C97B3D';
+
+      panel.innerHTML = `
+        <h3>Create your Brand Kit</h3>
+        <p>We pulled a starting color from your shop — change anything you like.</p>
+        <label>Name <input id="bk-name" value="My Brand Kit" /></label>
+        <label>Primary color <input id="bk-primary" type="color" value="${primary}" /></label>
+        <label>Accent color <input id="bk-accent" type="color" value="${accent}" /></label>
+        <label>Headline font
+          <select id="bk-font">
+            <option value="inter">Modern (Inter)</option>
+            <option value="fraunces">Editorial (Fraunces)</option>
+          </select>
+        </label>
+        <label>Style
+          <select id="bk-style">
+            <option value="minimal">Minimal</option>
+            <option value="lifestyle">Lifestyle</option>
+            <option value="typography_forward">Typography-forward</option>
+            <option value="photo_first">Photo-first</option>
+          </select>
+        </label>
+        <button type="button" id="save-brand-kit-btn">Looks good — Save &amp; Continue</button>
+      `;
+
+      document.getElementById('save-brand-kit-btn').addEventListener('click', async () => {
+        const res = await window.authedFetch('/api/brand-kits', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            name: document.getElementById('bk-name').value || 'My Brand Kit',
+            primaryColor: document.getElementById('bk-primary').value,
+            accentColor: document.getElementById('bk-accent').value,
+            headlineFont: document.getElementById('bk-font').value,
+            visualStyle: document.getElementById('bk-style').value,
+          }),
+        });
+        const kit = await res.json();
+        if (!res.ok) {
+          alert(kit.error || 'Failed to save Brand Kit.');
+          return;
+        }
+        window.pinCreatorState.selectedBrandKitId = kit.id;
+        panel.style.display = 'none';
+        showGenerateStep();
+      });
+    }
+
+    function showGenerateStep() {
+      document.getElementById('step-indicator-2').classList.remove('active');
+      document.getElementById('step-indicator-3').classList.add('active');
+      const panel = document.getElementById('step-3-panel');
+      panel.style.display = 'block';
+      panel.innerHTML = '<button type="button" id="generate-btn">Generate 3 Pins</button>';
+      document.getElementById('generate-btn').addEventListener('click', runGenerate);
+    }
+
+    async function runGenerate() {
+      const panel = document.getElementById('step-3-panel');
+      panel.innerHTML = '<p>Writing and rendering your pins — this can take up to 30 seconds…</p>';
+
+      const { selectedListing, selectedPhotoUrl, selectedBrandKitId } = window.pinCreatorState;
+      const res = await window.authedFetch('/api/pinterest-pins/generate', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          listingId: selectedListing.listing_id,
+          photoUrl: selectedPhotoUrl,
+          brandKitId: selectedBrandKitId,
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        panel.innerHTML = `<p>${data.error || 'Something went wrong generating your pins.'}</p><button type="button" id="generate-btn">Try again</button>`;
+        document.getElementById('generate-btn').addEventListener('click', runGenerate);
+        return;
+      }
+
+      panel.style.display = 'none';
+      document.getElementById('step-indicator-3').classList.remove('active');
+      document.getElementById('step-indicator-4').classList.add('active');
+      renderReviewStep(data.pins);
+      loadLibrary();
+    }
+
+    function renderReviewStep(pins) {
+      const panel = document.getElementById('step-4-panel');
+      panel.style.display = 'block';
+      panel.innerHTML = pins.map(pin => `
+        <article data-pin-id="${pin.id}" style="border:1px solid var(--border); border-radius:8px; padding:1rem; margin-bottom:1rem;">
+          <img src="${pin.previewUrl}" alt="" style="width:200px; display:block; margin-bottom:.6rem;" />
+          ${pin.classificationConfidence !== 'high' ? '<p style="color:var(--accent);">We\'re not fully sure what this photo shows — please double-check the wording below.</p>' : ''}
+          <label>Pinterest title <input class="pin-title-input" value="${pin.pinTitle.replace(/"/g, '&quot;')}" /></label>
+          <label>Description <textarea class="pin-desc-input">${pin.pinDescription}</textarea></label>
+          <label>Destination link <input class="pin-dest-input" value="${pin.destinationUrl}" /></label>
+          <button type="button" class="save-edits-btn">Save edits</button>
+          <button type="button" class="share-btn">Share to Pinterest</button>
+          <a class="download-link" href="#" target="_blank">Download</a>
+        </article>
+      `).join('');
+
+      panel.querySelectorAll('article').forEach(article => wireUpPinCard(article));
+    }
+
+    function wireUpPinCard(article) {
+      const pinId = article.dataset.pinId;
+
+      article.querySelector('.save-edits-btn').addEventListener('click', async () => {
+        const { error } = await window.pinCreatorSupabase
+          .from('pinterest_pins')
+          .update({
+            pin_title: article.querySelector('.pin-title-input').value,
+            pin_description: article.querySelector('.pin-desc-input').value,
+            destination_url: article.querySelector('.pin-dest-input').value,
+          })
+          .eq('id', pinId);
+        alert(error ? `Failed to save: ${error.message}` : 'Saved.');
+      });
+
+      article.querySelector('.share-btn').addEventListener('click', async () => {
+        const imgEl = article.querySelector('img');
+        const shareUrl = buildPinterestShareUrl({
+          pageUrl: article.querySelector('.pin-dest-input').value,
+          imageUrl: imgEl.src,
+          socialPost: { title: article.querySelector('.pin-title-input').value, caption: article.querySelector('.pin-desc-input').value, hashtags: [] },
+        });
+        window.open(shareUrl, '_blank');
+      });
+
+      const downloadLink = article.querySelector('.download-link');
+      downloadLink.addEventListener('click', async (e) => {
+        e.preventDefault();
+        const res = await window.authedFetch(`/api/pinterest-pins/${pinId}/signed-url?download=1`);
+        const data = await res.json();
+        if (res.ok) window.open(data.url, '_blank');
+      });
+    }
+
+    // Library: direct RLS-scoped read, same convention public/my-pages.html
+    // already uses for landing_pages -- no server endpoint needed for a
+    // read this simple.
+    async function loadLibrary() {
+      const library = document.getElementById('library');
+      const { data: rows, error } = await window.pinCreatorSupabase
+        .from('pinterest_pins')
+        .select('id, angle, pin_title, status, created_at, batch_id')
+        .order('created_at', { ascending: false });
+      if (error) {
+        library.innerHTML = `<p>Failed to load your pin library: ${error.message}</p>`;
+        return;
+      }
+      if (rows.length === 0) {
+        library.innerHTML = '<p>No pins yet — generate your first batch above.</p>';
+        return;
+      }
+      library.innerHTML = rows.map(row => `
+        <div style="display:flex; justify-content:space-between; border-bottom:1px solid var(--border); padding:.5rem 0;">
+          <span>${row.pin_title} <small style="color:var(--muted);">(${row.angle})</small></span>
+          <a href="#" class="library-view-link" data-pin-id="${row.id}">View image</a>
+        </div>
+      `).join('');
+      library.querySelectorAll('.library-view-link').forEach(link => {
+        link.addEventListener('click', async (e) => {
+          e.preventDefault();
+          const res = await window.authedFetch(`/api/pinterest-pins/${link.dataset.pinId}/signed-url`);
+          const data = await res.json();
+          if (res.ok) window.open(data.url, '_blank');
+        });
+      });
+    }
+
+    loadLibrary();
   </script>
 </body>
 </html>
