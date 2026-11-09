@@ -25,6 +25,8 @@ import { syncMadeToOrderReceipts } from './lib/etsySync.js';
 import { importAsset } from './lib/assetImporter.js';
 import { generatePageStory } from './lib/pageStoryGenerator.js';
 import { SOCIAL_PLATFORMS } from './lib/pageStorySchema.js';
+import { generatePinBatch } from './lib/pinCopyGenerator.js';
+import { renderPinImage } from './lib/pinImageRenderer.js';
 import { applyTextEdits } from './lib/pageTextEdits.js';
 
 const {
@@ -1772,6 +1774,163 @@ app.get('/api/brand-kits/suggested-colors', requireApproved, async (req, res) =>
   } catch (err) {
     console.error('Brand kit color suggestion failed:', err.message);
     res.json({ primaryColor: null, accentColor: null });
+  }
+});
+
+// Generates one batch of 3 Pinterest pins for a listing + chosen photo +
+// Brand Kit. Mirrors POST /api/landing-pages' shape closely: a friendly
+// allowance pre-check before doing any real work, then insert as the
+// caller (not the service role) so the "within their allowance" RLS policy
+// is the real enforcement point (design doc §16 item 9) -- not an
+// app-layer check that concurrent requests could race past.
+app.post('/api/pinterest-pins/generate', requireApproved, async (req, res) => {
+  if (!supabaseAdmin) {
+    return res.status(503).json({ error: 'Pinterest Pins are not configured on the server.' });
+  }
+
+  const { listingId, photoUrl, brandKitId } = req.body ?? {};
+  if (!listingId || !photoUrl) {
+    return res.status(400).json({ error: 'Missing listingId or photoUrl.' });
+  }
+
+  const { data: allowance, error: allowanceError } = await supabaseAdmin
+    .rpc('create_pinterest_pins_allowed', { p_user_id: req.user.id });
+  if (allowanceError) {
+    console.error(allowanceError);
+    return res.status(500).json({ error: allowanceError.message });
+  }
+  if (!allowance?.[0]?.allowed) {
+    return res.status(403).json({ error: "You've reached your Pinterest pin limit — purchase again to unlock more." });
+  }
+
+  let listing;
+  try {
+    listing = await etsyFetch(`/listings/${listingId}?includes=Shop`);
+  } catch (err) {
+    console.error(err);
+    return res.status(502).json({ error: err.message });
+  }
+  if (!assertShopAllowed(req, res, listing.shop?.shop_name || '')) return;
+
+  const supabaseAsUser = createClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
+    auth: { persistSession: false },
+    global: { headers: { Authorization: req.headers.authorization } },
+  });
+
+  let brandKit = null;
+  if (brandKitId) {
+    const { data: kitRow, error: kitError } = await supabaseAsUser
+      .from('brand_kits')
+      .select('primary_color, accent_color, headline_font, visual_style')
+      .eq('id', brandKitId)
+      .maybeSingle();
+    if (kitError) {
+      console.error(kitError);
+      return res.status(500).json({ error: kitError.message });
+    }
+    if (kitRow) {
+      brandKit = {
+        primaryColor: kitRow.primary_color,
+        accentColor: kitRow.accent_color,
+        headlineFont: kitRow.headline_font,
+        visualStyle: kitRow.visual_style,
+      };
+    }
+  }
+
+  try {
+    const batch = await generatePinBatch(anthropic, {
+      title: listing.title,
+      description: listing.description,
+      price: listing.price,
+      currency: listing.price?.currency_code,
+      tags: listing.tags,
+      materials: listing.materials,
+      shopName: listing.shop?.shop_name,
+    }, photoUrl);
+
+    const batchId = crypto.randomUUID();
+    const destinationUrl = listing.url;
+
+    // Render and upload all 3 images first, then insert all 3 rows in ONE
+    // bulk statement below. This is deliberate, not incidental: the
+    // "within their allowance" RLS policy (supabase/migrations/
+    // 20261109010000_pinterest_pins.sql) checks
+    // count(distinct batch_id) < pin_batch_allowance per row. If these 3
+    // rows were inserted as 3 SEPARATE statements, row 1's commit would
+    // already push the distinct-batch count up by 1 (all 3 share one new
+    // batch_id), so row 2's check would evaluate against that
+    // already-incremented count -- a seller with exactly 1 batch of
+    // allowance remaining would get row 1 inserted, then row 2 rejected by
+    // RLS, leaving a corrupted partial batch. A single multi-row INSERT is
+    // atomic (all rows pass together or the whole statement fails) and all
+    // 3 rows' checks see the same pre-statement snapshot, which is the
+    // semantics the allowance policy was actually designed around.
+    const renderedImages = [];
+    for (const variation of batch.variations) {
+      const imageBuffer = await renderPinImage({ photoUrl, headline: variation.headline, brandKit });
+      const imagePath = `${req.user.id}/${batchId}/${variation.angle}.png`;
+
+      const { error: uploadError } = await supabaseAdmin.storage
+        .from('pinterest-pin-assets')
+        .upload(imagePath, imageBuffer, { contentType: 'image/png' });
+      if (uploadError) throw new Error(uploadError.message);
+
+      renderedImages.push({ variation, imagePath });
+    }
+
+    const { data: rows, error: insertError } = await supabaseAsUser
+      .from('pinterest_pins')
+      .insert(renderedImages.map(({ variation, imagePath }) => ({
+        user_id: req.user.id,
+        listing_id: listing.listing_id,
+        brand_kit_id: brandKitId ?? null,
+        batch_id: batchId,
+        angle: variation.angle,
+        headline: variation.headline,
+        supporting_text: variation.supportingText,
+        pin_title: variation.pinTitle,
+        pin_description: variation.pinDescription,
+        keywords: variation.keywords,
+        board_category: variation.boardCategory,
+        destination_url: destinationUrl,
+        image_path: imagePath,
+        photo_classification: batch.photoClassification,
+        classification_confidence: batch.classificationConfidence,
+      })))
+      .select();
+    if (insertError) throw new Error(insertError.message);
+
+    const insertedRows = [];
+    for (const row of rows) {
+      const { data: signedUrlData, error: signError } = await supabaseAdmin.storage
+        .from('pinterest-pin-assets')
+        .createSignedUrl(row.image_path, 3600);
+      if (signError) throw new Error(signError.message);
+
+      insertedRows.push({
+        id: row.id,
+        angle: row.angle,
+        headline: row.headline,
+        pinTitle: row.pin_title,
+        pinDescription: row.pin_description,
+        destinationUrl: row.destination_url,
+        previewUrl: signedUrlData.signedUrl,
+        photoClassification: row.photo_classification,
+        classificationConfidence: row.classification_confidence,
+      });
+    }
+
+    res.json({ batchId, pins: insertedRows });
+  } catch (err) {
+    console.error(err);
+    if (err instanceof Anthropic.AuthenticationError) {
+      return res.status(502).json({ error: 'Invalid Anthropic API key.' });
+    }
+    if (err instanceof Anthropic.RateLimitError) {
+      return res.status(502).json({ error: 'Rate limited by Anthropic API — try again shortly.' });
+    }
+    res.status(502).json({ error: err.message });
   }
 });
 
