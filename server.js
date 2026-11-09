@@ -1937,6 +1937,51 @@ app.post('/api/pinterest-pins/generate', requireApproved, async (req, res) => {
   }
 });
 
+// Hands out a fresh signed URL for one pin's stored image -- used by the
+// library view (previewUrls from the generate response expire after an
+// hour) and as the Share-to-Pinterest "media" param, which must be a
+// publicly fetchable URL (Pinterest's own servers fetch it) even though the
+// bucket itself is private -- a signed URL satisfies both. ?download=1
+// sets Content-Disposition so a direct link click saves the file instead
+// of opening it. Ownership is checked via the RLS-scoped read before the
+// service role (which bypasses RLS) is used to actually sign the URL --
+// same split used throughout: RLS decides who owns what, service role
+// only ever acts once that's already confirmed.
+app.get('/api/pinterest-pins/:id/signed-url', requireApproved, async (req, res) => {
+  if (!supabaseAdmin) {
+    return res.status(503).json({ error: 'Pinterest Pins are not configured on the server.' });
+  }
+
+  const supabaseAsUser = createClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
+    auth: { persistSession: false },
+    global: { headers: { Authorization: req.headers.authorization } },
+  });
+
+  const { data: row, error: fetchError } = await supabaseAsUser
+    .from('pinterest_pins')
+    .select('image_path')
+    .eq('id', req.params.id)
+    .maybeSingle();
+  if (fetchError) {
+    console.error(fetchError);
+    return res.status(500).json({ error: fetchError.message });
+  }
+  if (!row) {
+    return res.status(404).json({ error: 'Pin not found.' });
+  }
+
+  const options = req.query.download === '1' ? { download: 'pinterest-pin.png' } : undefined;
+  const { data: signedUrlData, error: signError } = await supabaseAdmin.storage
+    .from('pinterest-pin-assets')
+    .createSignedUrl(row.image_path, 3600, options);
+  if (signError) {
+    console.error(signError);
+    return res.status(500).json({ error: signError.message });
+  }
+
+  res.json({ url: signedUrlData.signedUrl });
+});
+
 app.get('/api/shop/:shopName', requireApproved, async (req, res) => {
   if (!assertShopAllowed(req, res, req.params.shopName)) return;
   try {
