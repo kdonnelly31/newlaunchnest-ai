@@ -252,6 +252,7 @@
 <body>
   <div style="position:fixed; top:1rem; right:1.25rem; display:flex; align-items:center; gap:1rem; font-size:.85rem; max-width:calc(100vw - 2.5rem); flex-wrap:wrap; justify-content:flex-end;">
     <a id="my-pages-link" href="/my-pages.html" style="display:none; color:var(--muted); text-decoration:none;">Manage My Landing Pages</a>
+    <a id="pinterest-pins-link" href="/pinterest-pins.html" style="display:none; color:var(--muted); text-decoration:none;">Pinterest Pins</a>
     <a id="admin-link" href="/admin.html" style="display:none; color:var(--muted); text-decoration:none;">Admin</a>
     <a id="logout-link" href="#" style="display:none; color:var(--muted); text-decoration:none;">Log out</a>
   </div>
@@ -293,6 +294,7 @@
         const logoutLink = document.getElementById('logout-link');
         logoutLink.style.display = 'block';
         document.getElementById('my-pages-link').style.display = 'block';
+        document.getElementById('pinterest-pins-link').style.display = 'block';
         logoutLink.addEventListener('click', async (e) => {
           e.preventDefault();
           await supabase.auth.signOut();

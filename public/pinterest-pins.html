@@ -1,0 +1,239 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Pinterest Pins — LaunchNestAI</title>
+<style>
+  :root { --accent: #c23b5a; --ink: #241a1e; --muted: #6b575d; --border: #e3d7d2; --bg: #fbf7f5; }
+  * { box-sizing: border-box; }
+  body { font-family: -apple-system, 'Segoe UI', Roboto, sans-serif; background: var(--bg); color: var(--ink); margin: 0; padding: 0 1.5rem 4rem; }
+  .topbar { display: flex; justify-content: flex-end; gap: 1rem; padding: 1rem 0; font-size: .85rem; }
+  .topbar a { color: var(--muted); text-decoration: none; }
+  header { max-width: 760px; margin: 0 auto 1.5rem; }
+  header h1 { margin: 0 0 .4rem; }
+  .steps { max-width: 760px; margin: 0 auto 2rem; display: flex; gap: .5rem; font-size: .8rem; color: var(--muted); }
+  .steps .step.active { color: var(--accent); font-weight: 600; }
+  .panel { max-width: 760px; margin: 0 auto 2rem; }
+  .search-bar { max-width: 760px; margin: 0 auto 1rem; display: flex; gap: .5rem; }
+  .search-bar input { flex: 1; padding: .6rem .8rem; border: 1px solid var(--border); border-radius: 6px; }
+  .search-bar button { padding: .6rem 1.2rem; border: none; border-radius: 6px; background: var(--accent); color: #fff; cursor: pointer; }
+  .grid { max-width: 760px; margin: 0 auto 1rem; display: grid; grid-template-columns: repeat(auto-fill, minmax(160px, 1fr)); gap: 1rem; }
+  .card-select { display: block; width: 100%; text-align: left; background: #fff; border: 1px solid var(--border); border-radius: 8px; overflow: hidden; cursor: pointer; padding: 0; }
+  .card-select img { width: 100%; height: 140px; object-fit: cover; display: block; }
+  .card-select .title { padding: .5rem .6rem; font-size: .82rem; }
+  .listing-select-row { max-width: 760px; margin: 0 auto 1rem; }
+  .listing-select-row select { width: 100%; padding: .6rem; border: 1px solid var(--border); border-radius: 6px; }
+  .photo-gallery { max-width: 760px; margin: 0 auto 1.5rem; display: grid; grid-template-columns: repeat(auto-fill, minmax(120px, 1fr)); gap: .6rem; }
+  .photo-gallery button { padding: 0; border: 3px solid transparent; border-radius: 6px; cursor: pointer; background: none; }
+  .photo-gallery button.selected { border-color: var(--accent); }
+  .photo-gallery img { width: 100%; height: 110px; object-fit: cover; border-radius: 4px; display: block; }
+  #status { max-width: 760px; margin: 0 auto 1rem; color: var(--muted); }
+</style>
+</head>
+<body>
+  <div class="topbar">
+    <a id="my-pages-link" href="/my-pages.html">My Landing Pages</a>
+    <a id="logout-link" href="#">Log out</a>
+  </div>
+
+  <header>
+    <h1>Pinterest Pins</h1>
+    <p>Turn one of your Etsy listings into 3 ready-to-share Pinterest pins.</p>
+  </header>
+
+  <div class="steps">
+    <span class="step active" id="step-indicator-1">1. Choose product &amp; photo</span>
+    <span class="step" id="step-indicator-2">2. Choose brand</span>
+    <span class="step" id="step-indicator-3">3. Generate</span>
+    <span class="step" id="step-indicator-4">4. Review, share &amp; download</span>
+  </div>
+
+  <div id="status"></div>
+
+  <div class="search-bar">
+    <input id="shop-input" type="text" placeholder="e.g. YarnCraftCo" />
+    <button id="search-btn">Search</button>
+  </div>
+
+  <div class="grid" id="grid"></div>
+
+  <div class="listing-select-row" id="listing-select-row" style="display:none;">
+    <select id="listing-select">
+      <option value="">Or pick from the full list…</option>
+    </select>
+  </div>
+
+  <div class="photo-gallery" id="photo-gallery" style="display:none;"></div>
+
+  <div class="panel" id="step-2-panel" style="display:none;"></div>
+  <div class="panel" id="step-3-panel" style="display:none;"></div>
+  <div class="panel" id="step-4-panel" style="display:none;"></div>
+
+  <script type="module">
+    import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
+
+    const status = document.getElementById('status');
+    const grid = document.getElementById('grid');
+    const listingSelectRow = document.getElementById('listing-select-row');
+    const listingSelect = document.getElementById('listing-select');
+    const photoGallery = document.getElementById('photo-gallery');
+
+    // Shared with pinterest-pins-steps.js (Task 9) via a plain global --
+    // this file only owns Step 1; Task 9 appends the rest of the flow and
+    // reads these same fields once a photo has been chosen.
+    window.pinCreatorState = { listings: [], selectedListing: null, selectedPhotoUrl: null };
+
+    function escapeHtml(s) {
+      return String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+    }
+
+    const configRes = await fetch('/api/config');
+    if (!configRes.ok) {
+      status.textContent = 'Could not load app configuration.';
+    } else {
+      const { supabaseUrl, supabaseAnonKey } = await configRes.json();
+      const supabase = createClient(supabaseUrl, supabaseAnonKey, {
+        auth: {
+          storage: {
+            getItem: (key) => localStorage.getItem(key) ?? sessionStorage.getItem(key),
+            setItem: (key, value) => localStorage.setItem(key, value),
+            removeItem: (key) => { localStorage.removeItem(key); sessionStorage.removeItem(key); },
+          },
+        },
+      });
+
+      const { data: { session } } = await supabase.auth.getSession();
+      if (!session) {
+        window.location.href = '/login.html';
+      } else {
+        window.authedFetch = (url, options = {}) => fetch(url, {
+          ...options,
+          headers: { ...(options.headers || {}), Authorization: `Bearer ${session.access_token}` },
+        });
+        window.pinCreatorSupabase = supabase;
+
+        document.getElementById('logout-link').addEventListener('click', async (e) => {
+          e.preventDefault();
+          await supabase.auth.signOut();
+          window.location.href = '/login.html';
+        });
+
+        initProductPicker();
+      }
+    }
+
+    function initProductPicker() {
+      const input = document.getElementById('shop-input');
+      const btn = document.getElementById('search-btn');
+
+      async function search() {
+        const shopName = input.value.trim();
+        if (!shopName) return;
+        status.textContent = `Loading listings for "${shopName}"…`;
+        grid.innerHTML = '';
+        listingSelectRow.style.display = 'none';
+        photoGallery.style.display = 'none';
+
+        const res = await window.authedFetch(`/api/shop/${encodeURIComponent(shopName)}`);
+        const data = await res.json();
+        if (!res.ok) {
+          status.textContent = data.error || 'Failed to load shop.';
+          return;
+        }
+
+        window.pinCreatorState.listings = data.listings;
+        status.textContent = `${data.listings.length} active listing(s) found.`;
+
+        grid.innerHTML = data.listings.map(listing => `
+          <button type="button" class="card-select" data-listing-id="${listing.id}">
+            <img src="${listing.image || ''}" alt="${escapeHtml(listing.title)}" loading="lazy" />
+            <div class="title">${escapeHtml(listing.title)}</div>
+          </button>
+        `).join('');
+
+        listingSelect.innerHTML = '<option value="">Or pick from the full list…</option>' +
+          data.listings.map(l => `<option value="${l.id}">${escapeHtml(l.title)}</option>`).join('');
+        listingSelectRow.style.display = data.listings.length ? 'block' : 'none';
+      }
+
+      btn.addEventListener('click', search);
+      input.addEventListener('keydown', e => { if (e.key === 'Enter') search(); });
+
+      // Fast path: clicking a grid photo card selects the product AND uses
+      // that card's photo immediately, skipping the gallery below -- design
+      // doc §16 item 7, mirroring public/index.html:735-739's existing
+      // "clicking a card creates the landing page directly" shortcut.
+      grid.addEventListener('click', async (e) => {
+        const card = e.target.closest('.card-select');
+        if (!card) return;
+        await selectListing(card.dataset.listingId, true);
+      });
+
+      // Deliberate path: the dropdown opens the full photo gallery instead,
+      // for a seller who wants to review every photo before picking one.
+      listingSelect.addEventListener('change', async (e) => {
+        if (!e.target.value) return;
+        await selectListing(e.target.value, false);
+      });
+    }
+
+    async function selectListing(listingId, useFastPath) {
+      status.textContent = 'Loading listing details…';
+      const res = await window.authedFetch(`/api/listing/${listingId}`);
+      const listing = await res.json();
+      if (!res.ok) {
+        status.textContent = listing.error || 'Failed to load listing.';
+        return;
+      }
+
+      window.pinCreatorState.selectedListing = listing;
+      status.textContent = '';
+
+      const images = listing.images || [];
+
+      // Fast path uses this listing's first/primary photo at FULL
+      // resolution (url_fullxfull) -- never the smaller url_570xN thumbnail
+      // the grid card itself displays (that thumbnail comes from the
+      // existing /api/shop endpoint's formatListing(), which deliberately
+      // picks the smaller image for fast grid browsing). Using the grid
+      // card's thumbnail here would undercut the classification-accuracy
+      // decision in design doc §16 item 6 ("send the full-resolution photo
+      // for this one classification call -- an infographic's small text
+      // can be unreadable at thumbnail size"). Fetching /api/listing/:id
+      // above already gives us this listing's real images[] array, so the
+      // full-resolution version of the same photo the card displayed is
+      // available here regardless of which path the seller took.
+      if (useFastPath) {
+        const firstImage = images[0];
+        const fullResUrl = firstImage?.url_fullxfull || firstImage?.url_570xN;
+        if (fullResUrl) {
+          choosePhoto(fullResUrl);
+          return;
+        }
+        // No images on this listing somehow -- fall through to the (empty) gallery below.
+      }
+
+      photoGallery.innerHTML = images.map((img, i) => {
+        const url = img.url_fullxfull || img.url_570xN;
+        return `<button type="button" data-photo-url="${escapeHtml(url)}" data-index="${i}"><img src="${img.url_570xN || url}" alt="" loading="lazy" /></button>`;
+      }).join('');
+      photoGallery.style.display = images.length ? 'grid' : 'none';
+    }
+
+    photoGallery.addEventListener('click', (e) => {
+      const btn = e.target.closest('button');
+      if (!btn) return;
+      choosePhoto(btn.dataset.photoUrl);
+      photoGallery.querySelectorAll('button').forEach(b => b.classList.toggle('selected', b === btn));
+    });
+
+    function choosePhoto(photoUrl) {
+      window.pinCreatorState.selectedPhotoUrl = photoUrl;
+      document.getElementById('step-indicator-1').classList.remove('active');
+      document.getElementById('step-indicator-2').classList.add('active');
+      window.dispatchEvent(new CustomEvent('pin-creator:photo-chosen'));
+    }
+  </script>
+</body>
+</html>
