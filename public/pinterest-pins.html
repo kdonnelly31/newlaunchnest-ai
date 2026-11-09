@@ -126,6 +126,7 @@
         });
 
         initProductPicker();
+        loadLibrary();
       }
     }
 
@@ -275,7 +276,7 @@
         <label for="brand-kit-select">Choose a Brand Kit</label>
         <select id="brand-kit-select">
           <option value="">Select…</option>
-          ${kits.map(k => `<option value="${k.id}">${k.name}</option>`).join('')}
+          ${kits.map(k => `<option value="${k.id}">${escapeHtml(k.name)}</option>`).join('')}
         </select>
         <p><button type="button" id="new-brand-kit-btn">Create a new Brand Kit instead</button></p>
       `;
@@ -390,9 +391,9 @@
         <article data-pin-id="${pin.id}" style="border:1px solid var(--border); border-radius:8px; padding:1rem; margin-bottom:1rem;">
           <img src="${pin.previewUrl}" alt="" style="width:200px; display:block; margin-bottom:.6rem;" />
           ${pin.classificationConfidence !== 'high' ? '<p style="color:var(--accent);">We\'re not fully sure what this photo shows — please double-check the wording below.</p>' : ''}
-          <label>Pinterest title <input class="pin-title-input" value="${pin.pinTitle.replace(/"/g, '&quot;')}" /></label>
-          <label>Description <textarea class="pin-desc-input">${pin.pinDescription}</textarea></label>
-          <label>Destination link <input class="pin-dest-input" value="${pin.destinationUrl}" /></label>
+          <label>Pinterest title <input class="pin-title-input" value="${escapeHtml(pin.pinTitle)}" /></label>
+          <label>Description <textarea class="pin-desc-input">${escapeHtml(pin.pinDescription)}</textarea></label>
+          <label>Destination link <input class="pin-dest-input" value="${escapeHtml(pin.destinationUrl)}" /></label>
           <button type="button" class="save-edits-btn">Save edits</button>
           <button type="button" class="share-btn">Share to Pinterest</button>
           <a class="download-link" href="#" target="_blank">Download</a>
@@ -455,7 +456,7 @@
       }
       library.innerHTML = rows.map(row => `
         <div style="display:flex; justify-content:space-between; border-bottom:1px solid var(--border); padding:.5rem 0;">
-          <span>${row.pin_title} <small style="color:var(--muted);">(${row.angle})</small></span>
+          <span>${escapeHtml(row.pin_title)} <small style="color:var(--muted);">(${escapeHtml(row.angle)})</small></span>
           <a href="#" class="library-view-link" data-pin-id="${row.id}">View image</a>
         </div>
       `).join('');
@@ -468,8 +469,6 @@
         });
       });
     }
-
-    loadLibrary();
   </script>
 </body>
 </html>
