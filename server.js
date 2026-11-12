@@ -17,7 +17,7 @@ import {
   exchangeCodeForToken,
   getValidEtsyToken,
 } from './lib/etsyOAuth.js';
-import { evaluateReceipt } from './lib/verifyPurchase.js';
+import { evaluateReceipt, matchProductListing } from './lib/verifyPurchase.js';
 import { extractAccentColor } from './lib/brandColor.js';
 import { renderLandingPageDocument, renderNotFoundPage, getPageTitle } from './lib/landingPageTemplate.js';
 import { createMtoStore } from './lib/mtoStore.js';
@@ -34,7 +34,7 @@ const {
   FACEBOOK_PAGE_ACCESS_TOKEN, FACEBOOK_PAGE_ID, INSTAGRAM_BUSINESS_ACCOUNT_ID,
   TIKTOK_CLIENT_KEY, TIKTOK_CLIENT_SECRET, TIKTOK_REDIRECT_URI = 'http://localhost:3000/auth/tiktok/callback',
   SUPABASE_URL, SUPABASE_ANON_KEY, SUPABASE_SERVICE_ROLE_KEY,
-  ETSY_SELLER_SHOP_NAME, ETSY_PRODUCT_LISTING_ID, ETSY_SHOP_NAME_QUESTION_ID,
+  ETSY_SELLER_SHOP_NAME, ETSY_PRODUCT_LISTING_ID, ETSY_PIN_PRODUCT_LISTING_ID, ETSY_SHOP_NAME_QUESTION_ID,
   ETSY_OAUTH_REDIRECT_URI = 'http://localhost:3000/auth/etsy/callback',
   PORT = 3000,
   CRON_SECRET,
@@ -76,6 +76,21 @@ if (!SUPABASE_SERVICE_ROLE_KEY) {
 if (!ETSY_SELLER_SHOP_NAME || !ETSY_PRODUCT_LISTING_ID) {
   console.warn('Missing ETSY_SELLER_SHOP_NAME or ETSY_PRODUCT_LISTING_ID. Automatic purchase verification will be unavailable.');
 }
+
+if (!ETSY_PIN_PRODUCT_LISTING_ID) {
+  console.warn('Missing ETSY_PIN_PRODUCT_LISTING_ID. Automatic purchase verification for Pinterest Pins will be unavailable until that listing exists and this is set.');
+}
+
+// Every product sold on Etsy that grants an allowance when verified, with
+// how many units one order grants. Pinterest Pins is a true standalone
+// product (verifyPurchase.js's matchProductListing lets a buyer activate an
+// account with only a pin purchase on file, no landing-page purchase ever) --
+// omitted entirely (listingId undefined) until ETSY_PIN_PRODUCT_LISTING_ID is
+// configured, so matchProductListing simply never matches it.
+const PRODUCT_LISTINGS = [
+  { product: 'landing_page', listingId: ETSY_PRODUCT_LISTING_ID, repurchaseGrant: 3 },
+  { product: 'pinterest_pins', listingId: ETSY_PIN_PRODUCT_LISTING_ID, repurchaseGrant: 3 },
+];
 
 // Service-role client: bypasses row-level security entirely, so it's only ever
 // used server-side and never sent to the browser. Three legitimate uses here:
@@ -1173,13 +1188,18 @@ app.post('/api/verify-purchase', requireAuth, async (req, res) => {
     return res.status(403).json({ error: "This account can't be activated automatically — contact support." });
   }
 
-  if (!ETSY_PRODUCT_LISTING_ID) {
+  const configuredProductListings = PRODUCT_LISTINGS.filter(p => p.listingId);
+  if (configuredProductListings.length === 0) {
     return res.status(503).json({ error: 'Purchase verification is temporarily unavailable — contact support.' });
   }
 
   // An already-approved account submitting an order number is buying more
-  // pages, not activating for the first time -- verified the same way, but
-  // grants +3 pages instead of flipping status, and never re-approves.
+  // of whichever product the order was for, not activating for the first
+  // time -- verified the same way, but grants more allowance instead of
+  // flipping status, and never re-approves. One status/shop name is shared
+  // across both products -- whichever is purchased first approves the
+  // account; a standalone Pinterest Pins purchase approves it just as well
+  // as a landing-page one.
   const isRepurchase = req.profile.status === 'approved';
 
   try {
@@ -1217,13 +1237,25 @@ app.post('/api/verify-purchase', requireAuth, async (req, res) => {
       }
     }
 
+    // Figures out which product this receipt actually paid for before
+    // evaluating it -- a receipt that paid for neither configured listing
+    // falls back to the first one here purely so evaluateReceipt's
+    // hasListing check still reports the correct "doesn't match a
+    // LaunchNestAI purchase" error; it can't accidentally match a wrong
+    // product this way, since matchProductListing already found no match
+    // among the same listing IDs.
+    const matched = !existingClaim ? matchProductListing(receipt, configuredProductListings) : null;
+    const fallbackListingId = matched?.listingId ?? configuredProductListings[0].listingId;
+
     const mtoSettings = mtoStore ? await getMtoSettings() : { enabled: false, cutoverAt: null };
     const result = evaluateReceipt({
       receipt,
-      listingId: ETSY_PRODUCT_LISTING_ID,
+      listingId: fallbackListingId,
       claimedByOtherUser: !!existingClaim,
       shopNameQuestionId: ETSY_SHOP_NAME_QUESTION_ID,
-      madeToOrderEnabled: mtoSettings.enabled,
+      // Made-to-order is a landing-page-specific workflow -- never applies
+      // to a Pinterest Pins purchase even if MTO happens to be enabled.
+      madeToOrderEnabled: mtoSettings.enabled && matched?.product === 'landing_page',
       cutoverAt: mtoSettings.cutoverAt,
     });
     if (!result.ok) {
@@ -1238,16 +1270,31 @@ app.post('/api/verify-purchase', requireAuth, async (req, res) => {
     const ownedShop = await getShopByOwnerUserId(result.buyerUserId);
     const canonicalShopName = ownedShop?.shop_name || await canonicalizeShopName(result.shopName);
 
-    // Claims the receipt, updates the profile, and (for a repurchase) grants
-    // +3 pages all in one atomic call -- record_verified_purchase does all
-    // three writes in a single transaction, so a failure partway through
-    // can't leave the receipt claimed with no pages granted (the earlier,
-    // multi-step version of this could -- see 20260925000000_atomic_purchase_recording.sql).
+    // A matched product is guaranteed here: result.ok can only be true if
+    // evaluateReceipt's hasListing check passed using fallbackListingId, and
+    // that's only possible when matched already found the same listing.
+    const grantAmount = matched.product === 'landing_page'
+      // Unchanged from before this route supported a second product: a first
+      // landing-page purchase grants 0 because profiles.page_allowance
+      // already defaults to 3; only a repurchase tops it up.
+      ? (isRepurchase ? matched.repurchaseGrant : 0)
+      // pinterest_pins' allowance defaults to 0 (it's a separate purchase,
+      // not a landing-page bonus -- design doc §16 item 9), so every
+      // verified purchase grants batches, first or repeat alike.
+      : matched.repurchaseGrant;
+
+    // Claims the receipt, updates the profile, and grants the right
+    // product's allowance all in one atomic call -- record_verified_purchase
+    // does all three writes in a single transaction, so a failure partway
+    // through can't leave the receipt claimed with nothing granted (the
+    // earlier, multi-step version of this could -- see
+    // 20260925000000_atomic_purchase_recording.sql).
     const { error: recordError } = await supabaseAdmin.rpc('record_verified_purchase', {
       p_user_id: req.user.id,
       p_receipt_id: receiptId,
       p_approve: !isRepurchase,
-      p_grant_amount: isRepurchase ? 3 : 0,
+      p_grant_amount: grantAmount,
+      p_product: matched.product,
       // Falls back to the existing manual admin field when the buyer's
       // answer to the "Your Etsy Shop Name" personalization question is
       // missing (e.g. an older order placed before that question existed).
@@ -1263,19 +1310,20 @@ app.post('/api/verify-purchase', requireAuth, async (req, res) => {
       throw new Error(recordError.message);
     }
 
-    res.json({ approved: true });
+    res.json({ approved: true, product: matched.product });
   } catch (err) {
     console.error(err);
     res.status(502).json({ error: 'Something went wrong checking your order — try again in a moment.' });
   }
 });
 
-// Lets an already-approved customer get +3 pages without retyping an order
-// number: looks at recent receipts on the seller's own Etsy shop and matches
-// one against the buyer's Etsy account ID captured on their last purchase
-// (see etsy_buyer_user_id) -- exact and can't be mistyped, unlike the
-// shop-name personalization answer. Called when the My Landing Pages tab
-// regains focus after the customer clicks through to buy again on Etsy.
+// Lets an already-approved customer get more allowance (pages or pin
+// batches, whichever they bought) without retyping an order number: looks at
+// recent receipts on the seller's own Etsy shop and matches one against the
+// buyer's Etsy account ID captured on their last purchase (see
+// etsy_buyer_user_id) -- exact and can't be mistyped, unlike the shop-name
+// personalization answer. Called when the My Landing Pages tab regains focus
+// after the customer clicks through to buy again on Etsy.
 app.post('/api/check-new-purchase', requireApproved, async (req, res) => {
   if (req.profile.role === 'admin') {
     return res.json({ found: false });
@@ -1285,7 +1333,8 @@ app.post('/api/check-new-purchase', requireApproved, async (req, res) => {
     // nothing on file to match a new receipt against.
     return res.json({ found: false });
   }
-  if (!ETSY_PRODUCT_LISTING_ID) {
+  const configuredProductListings = PRODUCT_LISTINGS.filter(p => p.listingId);
+  if (configuredProductListings.length === 0) {
     return res.status(503).json({ error: 'Purchase verification is temporarily unavailable — contact support.' });
   }
 
@@ -1311,22 +1360,26 @@ app.post('/api/check-new-purchase', requireApproved, async (req, res) => {
     }
     const { results: receipts = [] } = await receiptsRes.json();
 
-    // Filter to this product first, then match the buyer -- a customer may
-    // have other, unrelated Etsy purchases in this same window.
+    // Filter to either known product first, then match the buyer -- a
+    // customer may have other, unrelated Etsy purchases in this same window.
     const candidate = receipts
-      .filter(r => (r.transactions || []).some(t => String(t.listing_id) === String(ETSY_PRODUCT_LISTING_ID)))
+      .filter(r => matchProductListing(r, configuredProductListings))
       .find(r => String(r.buyer_user_id) === String(req.profile.etsy_buyer_user_id));
 
     if (!candidate) {
       return res.json({ found: false });
     }
 
+    // Guaranteed non-null: the filter above already confirmed a match.
+    const matched = matchProductListing(candidate, configuredProductListings);
+
     const mtoSettings = mtoStore ? await getMtoSettings() : { enabled: false, cutoverAt: null };
     const result = evaluateReceipt({
       receipt: candidate,
-      listingId: ETSY_PRODUCT_LISTING_ID,
+      listingId: matched.listingId,
       claimedByOtherUser: false,
-      madeToOrderEnabled: mtoSettings.enabled,
+      // Made-to-order is landing-page-specific -- never applies to pins.
+      madeToOrderEnabled: mtoSettings.enabled && matched.product === 'landing_page',
       cutoverAt: mtoSettings.cutoverAt,
     });
     if (!result.ok) {
@@ -1352,7 +1405,8 @@ app.post('/api/check-new-purchase', requireApproved, async (req, res) => {
       p_user_id: req.user.id,
       p_receipt_id: receiptId,
       p_approve: false,
-      p_grant_amount: 3,
+      p_grant_amount: matched.repurchaseGrant,
+      p_product: matched.product,
     });
     if (recordError) {
       // Race with a manual submission of the same receipt, or a duplicate
@@ -1363,7 +1417,7 @@ app.post('/api/check-new-purchase', requireApproved, async (req, res) => {
       throw new Error(recordError.message);
     }
 
-    res.json({ found: true });
+    res.json({ found: true, product: matched.product });
   } catch (err) {
     console.error(err);
     res.status(502).json({ error: 'Something went wrong checking for a new purchase.' });
